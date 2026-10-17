@@ -4,31 +4,46 @@
   connection: local
   gather_facts: false
 
+  vars:
+    vault_addr: "http://vault.vault.svc.cluster.local:8200"
+    vault_role_id: "ed0ac1e5-1585-4206-853d-edfe999f242c"
+    vault_secret_id: "dac494d2-f79e-4499-e189-3699be850d56"
+    openshift_api_server: "https://api.sno.manohar.in:6443"
+
   tasks:
-    - name: Retrieve OpenShift credentials from Vault KV v2
-      ansible.builtin.set_fact:
-        vault_result: >-
-          {{
-            lookup(
-              'community.hashi_vault.vault_kv2_get',
-              'openshift/aap',
-              engine_mount_point='secret',
-              url='http://vault.vault.svc.cluster.local:8200',
-              auth_method='approle',
-              role_id=lookup('ansible.builtin.env', 'ANSIBLE_HASHI_VAULT_ROLE_ID'),
-              secret_id=lookup('ansible.builtin.env', 'ANSIBLE_HASHI_VAULT_SECRET_ID'),
-              validate_certs=false
-            )
-          }}
+    - name: Authenticate to Vault using AppRole
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ vault_role_id }}"
+          secret_id: "{{ vault_secret_id }}"
+        return_content: true
+        status_code: 200
+      register: vault_login
       no_log: true
 
-    - name: Retrieve pods from the OpenShift cluster
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        host: "{{ vault_result.secret['api-server'] }}"
-        api_key: "{{ vault_result.secret['api-token'] }}"
+    - name: Read OpenShift API token from Vault
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/secret/data/openshift/aap"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ vault_login.json.auth.client_token }}"
+        return_content: true
+        status_code: 200
+      register: vault_response
+      no_log: true
+
+    - name: Query pods across all namespaces
+      ansible.builtin.uri:
+        url: "{{ openshift_api_server }}/api/v1/pods"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ vault_response.json.data.data['api-token'] }}"
         validate_certs: false
+        return_content: true
+        status_code: 200
       register: pod_query
       no_log: true
 
@@ -36,7 +51,7 @@
       ansible.builtin.set_fact:
         crashing_pods: []
 
-    - name: Identify containers with waiting failures
+    - name: Identify containers in waiting failure states
       ansible.builtin.set_fact:
         crashing_pods: >-
           {{
@@ -47,7 +62,7 @@
               'reason': item.1.state.waiting.reason
             }]
           }}
-      loop: "{{ pod_query.resources | subelements('status.containerStatuses', skip_missing=True) }}"
+      loop: "{{ pod_query.json.items | subelements('status.containerStatuses', skip_missing=True) }}"
       when:
         - item.1.state.waiting is defined
         - item.1.state.waiting.reason in [
@@ -58,7 +73,7 @@
             'RunContainerError'
           ]
 
-    - name: Identify containers terminated by errors
+    - name: Identify containers terminated with errors
       ansible.builtin.set_fact:
         crashing_pods: >-
           {{
@@ -69,11 +84,11 @@
               'reason': item.1.state.terminated.reason
             }]
           }}
-      loop: "{{ pod_query.resources | subelements('status.containerStatuses', skip_missing=True) }}"
+      loop: "{{ pod_query.json.items | subelements('status.containerStatuses', skip_missing=True) }}"
       when:
         - item.1.state.terminated is defined
         - item.1.state.terminated.reason in ['Error', 'OOMKilled']
 
     - name: Display crashing pod report
       ansible.builtin.debug:
-        msg: "{{ crashing_pods if crashing_pods | length > 0 else 'No crashing containers found.' }}"
+        msg: "{{ crashing_pods if crashing_pods | length > 0 else ['No crashing containers found.'] }}"
