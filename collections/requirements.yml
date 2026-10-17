@@ -1,4 +1,4 @@
 collections:
   - name: community.hashi_vault
-#  - name: kubernetes.core
-  - name: redhat.openshift
+  - name: kubernetes.core
+
