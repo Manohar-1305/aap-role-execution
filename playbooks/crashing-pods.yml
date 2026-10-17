@@ -18,16 +18,26 @@
 
   tasks:
     - name: Query pods across all namespaces
-      ansible.builtin.uri:
-        url: "{{ openshift_api_server }}/api/v1/pods"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ openshift_api_token }}"
-        validate_certs: false
-        return_content: true
-        status_code: 200
-      register: pod_query
-      no_log: false
+      block:
+        - name: Call OpenShift pods API
+          ansible.builtin.uri:
+            url: "{{ openshift_api_server }}/api/v1/pods"
+            method: GET
+            headers:
+              Authorization: "Bearer {{ openshift_api_token }}"
+            validate_certs: false
+            return_content: true
+            status_code: 200
+          register: pod_query
+          no_log: true
+
+      rescue:
+        - name: Report OpenShift API request failure
+          ansible.builtin.fail:
+            msg: >-
+              OpenShift API request failed. Check API connectivity,
+              service-account token validity, and permissions to list pods.
+              The underlying error is hidden to protect credentials.
 
     - name: Initialize crashing pod report
       ansible.builtin.set_fact:
