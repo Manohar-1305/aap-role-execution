@@ -51,43 +51,28 @@
       ansible.builtin.set_fact:
         crashing_pods: []
 
-    - name: Identify containers in waiting failure states
+    - name: Process pods with container status lists
       ansible.builtin.set_fact:
-        crashing_pods: >-
+        crashing_pods: "{{ crashing_pods + pod_failures }}"
+      vars:
+        container_statuses: "{{ item.status.containerStatuses | default([], true) }}"
+        pod_failures: >-
           {{
-            crashing_pods + [{
-              'namespace': item.0.metadata.namespace,
-              'pod': item.0.metadata.name,
-              'container': item.1.name,
-              'reason': item.1.state.waiting.reason
-            }]
+            container_statuses
+            | selectattr('state.waiting', 'defined')
+            | selectattr('state.waiting.reason', 'defined')
+            | selectattr('state.waiting.reason', 'in',
+                ['CrashLoopBackOff', 'ErrImagePull', 'ImagePullBackOff',
+                 'CreateContainerError', 'RunContainerError'])
+            | map('combine', {
+                'namespace': item.metadata.namespace,
+                'pod': item.metadata.name
+              })
+            | list
           }}
-      loop: "{{ pod_query.json.items | subelements('status.containerStatuses', skip_missing=True) }}"
-      when:
-        - item.1.state.waiting is defined
-        - item.1.state.waiting.reason in [
-            'CrashLoopBackOff',
-            'ErrImagePull',
-            'ImagePullBackOff',
-            'CreateContainerError',
-            'RunContainerError'
-          ]
-
-    - name: Identify containers terminated with errors
-      ansible.builtin.set_fact:
-        crashing_pods: >-
-          {{
-            crashing_pods + [{
-              'namespace': item.0.metadata.namespace,
-              'pod': item.0.metadata.name,
-              'container': item.1.name,
-              'reason': item.1.state.terminated.reason
-            }]
-          }}
-      loop: "{{ pod_query.json.items | subelements('status.containerStatuses', skip_missing=True) }}"
-      when:
-        - item.1.state.terminated is defined
-        - item.1.state.terminated.reason in ['Error', 'OOMKilled']
+      loop: "{{ pod_query.json.items | default([], true) }}"
+      loop_control:
+        label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
 
     - name: Display crashing pod report
       ansible.builtin.debug:
