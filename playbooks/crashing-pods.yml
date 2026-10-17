@@ -52,12 +52,22 @@
         crashing_pods: []
 
 
+   
     - name: Process pods with container status lists
       ansible.builtin.set_fact:
-        crashing_pods: "{{ crashing_pods + pod_failures }}"
+        crashing_pods: "{{ crashing_pods + [pod_failure] }}"
       vars:
         container_statuses: "{{ item.status.containerStatuses | default([], true) }}"
-        pod_failures: >-
+        failed_containers: >-
+          {{
+            container_statuses
+            | selectattr('state.terminated', 'defined')
+            | selectattr('state.terminated.exitCode', 'defined')
+            | selectattr('state.terminated.exitCode', 'ne', 0)
+            | map(attribute='name')
+            | list
+          }}
+        waiting_containers: >-
           {{
             container_statuses
             | selectattr('state.waiting', 'defined')
@@ -73,19 +83,22 @@
                   'RunContainerError'
                 ]
               )
-            | map(
-                'combine',
-                {
-                  'namespace': item.metadata.namespace,
-                  'pod': item.metadata.name
-                }
-              )
+            | map(attribute='name')
             | list
           }}
+        pod_failure:
+          namespace: "{{ item.metadata.namespace }}"
+          pod: "{{ item.metadata.name }}"
+          phase: "{{ item.status.phase | default('Unknown') }}"
+          failed_containers: "{{ failed_containers }}"
+          waiting_containers: "{{ waiting_containers }}"
       loop: "{{ pod_query.json['items'] | default([], true) }}"
       loop_control:
         label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
-
+      when: >-
+        (item.status.phase | default('')) == 'Failed'
+        or (failed_containers | length > 0)
+        or (waiting_containers | length > 0)
 
     - name: Display crashing pod report
       ansible.builtin.debug:
