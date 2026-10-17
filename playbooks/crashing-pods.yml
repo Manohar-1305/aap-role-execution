@@ -1,0 +1,79 @@
+---
+- name: Find crashing pods across OpenShift
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Retrieve OpenShift credentials from Vault KV v2
+      ansible.builtin.set_fact:
+        vault_result: >-
+          {{
+            lookup(
+              'community.hashi_vault.vault_kv2_get',
+              'openshift/aap',
+              engine_mount_point='secret',
+              url='http://vault.vault.svc.cluster.local:8200',
+              auth_method='approle',
+              role_id=lookup('ansible.builtin.env', 'ANSIBLE_HASHI_VAULT_ROLE_ID'),
+              secret_id=lookup('ansible.builtin.env', 'ANSIBLE_HASHI_VAULT_SECRET_ID'),
+              validate_certs=false
+            )
+          }}
+      no_log: true
+
+    - name: Retrieve pods from the OpenShift cluster
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        host: "{{ vault_result.secret['api-server'] }}"
+        api_key: "{{ vault_result.secret['api-token'] }}"
+        validate_certs: false
+      register: pod_query
+      no_log: true
+
+    - name: Initialize crashing pod report
+      ansible.builtin.set_fact:
+        crashing_pods: []
+
+    - name: Identify containers with waiting failures
+      ansible.builtin.set_fact:
+        crashing_pods: >-
+          {{
+            crashing_pods + [{
+              'namespace': item.0.metadata.namespace,
+              'pod': item.0.metadata.name,
+              'container': item.1.name,
+              'reason': item.1.state.waiting.reason
+            }]
+          }}
+      loop: "{{ pod_query.resources | subelements('status.containerStatuses', skip_missing=True) }}"
+      when:
+        - item.1.state.waiting is defined
+        - item.1.state.waiting.reason in [
+            'CrashLoopBackOff',
+            'ErrImagePull',
+            'ImagePullBackOff',
+            'CreateContainerError',
+            'RunContainerError'
+          ]
+
+    - name: Identify containers terminated by errors
+      ansible.builtin.set_fact:
+        crashing_pods: >-
+          {{
+            crashing_pods + [{
+              'namespace': item.0.metadata.namespace,
+              'pod': item.0.metadata.name,
+              'container': item.1.name,
+              'reason': item.1.state.terminated.reason
+            }]
+          }}
+      loop: "{{ pod_query.resources | subelements('status.containerStatuses', skip_missing=True) }}"
+      when:
+        - item.1.state.terminated is defined
+        - item.1.state.terminated.reason in ['Error', 'OOMKilled']
+
+    - name: Display crashing pod report
+      ansible.builtin.debug:
+        msg: "{{ crashing_pods if crashing_pods | length > 0 else 'No crashing containers found.' }}"
