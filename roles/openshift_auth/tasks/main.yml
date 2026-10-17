@@ -1,0 +1,39 @@
+
+---
+- name: Authenticate to Vault using AppRole
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/auth/approle/login"
+    method: POST
+    body_format: json
+    body:
+      role_id: "{{ vault_role_id }}"
+      secret_id: "{{ vault_secret_id }}"
+    return_content: true
+    status_code: 200
+  register: vault_login
+  no_log: true
+
+- name: Read OpenShift credentials from Vault KV v2
+  ansible.builtin.uri:
+    url: "{{ vault_addr }}/v1/secret/data/openshift/aap"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ vault_login.json.auth.client_token }}"
+    return_content: true
+    status_code: 200
+  register: vault_response
+  no_log: true
+
+- name: Set OpenShift connection credentials
+  ansible.builtin.set_fact:
+    openshift_api_token: "{{ vault_response.json.data.data['api-token'] }}"
+    openshift_api_server: "{{ vault_response.json.data.data['api-server'] }}"
+  no_log: true
+
+- name: Validate OpenShift connection credentials
+  ansible.builtin.assert:
+    that:
+      - openshift_api_token | length > 0
+      - openshift_api_server | length > 0
+    fail_msg: "Vault did not return the required OpenShift credentials."
+  no_log: true
