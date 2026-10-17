@@ -5,69 +5,57 @@
   connection: local
   gather_facts: false
 
-  vars:
-    failure_reasons:
-      - CrashLoopBackOff
-      - ErrImagePull
-      - ImagePullBackOff
-      - CreateContainerError
-      - RunContainerError
-
   roles:
     - openshift_auth
 
   tasks:
     - name: Query pods across all namespaces
-      block:
-        - name: Call OpenShift pods API
-          ansible.builtin.uri:
-            url: "{{ openshift_api_server }}/api/v1/pods"
-            method: GET
-            headers:
-              Authorization: "Bearer {{ openshift_api_token }}"
-            validate_certs: false
-            return_content: true
-            status_code: 200
-          register: pod_query
-          no_log: true
-
-      rescue:
-        - name: Report OpenShift API request failure
-          ansible.builtin.fail:
-            msg: >-
-              OpenShift API request failed. Check API connectivity,
-              service-account token validity, and permissions to list pods.
-              The underlying error is hidden to protect credentials.
+      ansible.builtin.uri:
+        url: "{{ openshift_api_server }}/api/v1/pods"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ openshift_api_token }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: pod_query
+      no_log: true
 
     - name: Initialize crashing pod report
       ansible.builtin.set_fact:
         crashing_pods: []
 
-    - name: Identify pods with failed containers
+    - name: Process pods with container status lists
       ansible.builtin.set_fact:
         crashing_pods: "{{ crashing_pods + [pod_failure] }}"
       vars:
-        container_statuses: >-
-          {{
-            (item.status.containerStatuses | default([], true))
-            +
-            (item.status.initContainerStatuses | default([], true))
-          }}
+        container_statuses: "{{ item.status.containerStatuses | default([], true) }}"
         failed_containers: >-
           {{
             container_statuses
             | selectattr('state.terminated', 'defined')
             | selectattr('state.terminated.exitCode', 'defined')
-            | rejectattr('state.terminated.exitCode', 'equalto', 0)
+            | selectattr('state.terminated.exitCode', 'ne', 0)
             | map(attribute='name')
             | list
           }}
-        waiting_failures: >-
+        waiting_containers: >-
           {{
             container_statuses
             | selectattr('state.waiting', 'defined')
             | selectattr('state.waiting.reason', 'defined')
-            | selectattr('state.waiting.reason', 'in', failure_reasons)
+            | selectattr(
+                'state.waiting.reason',
+                'in',
+                [
+                  'CrashLoopBackOff',
+                  'ErrImagePull',
+                  'ImagePullBackOff',
+                  'CreateContainerError',
+                  'RunContainerError'
+                ]
+              )
+            | map(attribute='name')
             | list
           }}
         pod_failure:
@@ -75,22 +63,15 @@
           pod: "{{ item.metadata.name }}"
           phase: "{{ item.status.phase | default('Unknown') }}"
           failed_containers: "{{ failed_containers }}"
-          waiting_containers: "{{ waiting_failures | map(attribute='name') | list }}"
-          waiting_reasons: "{{ waiting_failures | map(attribute='state.waiting.reason') | list }}"
+          waiting_containers: "{{ waiting_containers }}"
       loop: "{{ pod_query.json['items'] | default([], true) }}"
       loop_control:
         label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
       when: >-
-        (failed_containers | length > 0)
-        or (waiting_failures | length > 0)
-        or (item.status.phase | default('') == 'Failed')
+        (item.status.phase | default('')) == 'Failed'
+        or (failed_containers | length > 0)
+        or (waiting_containers | length > 0)
 
-    - name: Display crashing pods
+    - name: Display crashing pod report
       ansible.builtin.debug:
-        var: crashing_pods
-      when: crashing_pods | length > 0
-
-    - name: Report no crashing pods
-      ansible.builtin.debug:
-        msg: "No crashing pods found."
-      when: crashing_pods | length == 0
+        msg: "{{ crashing_pods if crashing_pods | length > 0 else ['No crashing containers found.'] }}"
