@@ -6,9 +6,7 @@
   gather_facts: false
 
   vars:
-    vault_addr: "http://vault.vault.svc.cluster.local:8200"
     openshift_api_server: "https://api.sno.manohar.in:6443"
-
     failure_reasons:
       - CrashLoopBackOff
       - ErrImagePull
@@ -46,17 +44,15 @@
             +
             (item.status.initContainerStatuses | default([], true))
           }}
-
         failed_containers: >-
           {{
             container_statuses
             | selectattr('state.terminated', 'defined')
             | selectattr('state.terminated.exitCode', 'defined')
-            | selectattr('state.terminated.exitCode', 'ne', 0)
+            | rejectattr('state.terminated.exitCode', 'equalto', 0)
             | map(attribute='name')
             | list
           }}
-
         waiting_failures: >-
           {{
             container_statuses
@@ -65,32 +61,20 @@
             | selectattr('state.waiting.reason', 'in', failure_reasons)
             | list
           }}
-
         pod_failure:
           namespace: "{{ item.metadata.namespace }}"
           pod: "{{ item.metadata.name }}"
           phase: "{{ item.status.phase | default('Unknown') }}"
           failed_containers: "{{ failed_containers }}"
-          waiting_containers: >-
-            {{
-              waiting_failures
-              | map(attribute='name')
-              | list
-            }}
-          waiting_reasons: >-
-            {{
-              waiting_failures
-              | map(attribute='state.waiting.reason')
-              | list
-            }}
-
+          waiting_containers: "{{ waiting_failures | map(attribute='name') | list }}"
+          waiting_reasons: "{{ waiting_failures | map(attribute='state.waiting.reason') | list }}"
       loop: "{{ pod_query.json['items'] | default([], true) }}"
       loop_control:
         label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
       when: >-
         (failed_containers | length > 0)
         or (waiting_failures | length > 0)
-        or (item.status.phase | default('')) == 'Failed'
+        or (item.status.phase | default('') == 'Failed')
 
     - name: Display only crashing pods
       ansible.builtin.debug:
