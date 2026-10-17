@@ -51,6 +51,7 @@
       ansible.builtin.set_fact:
         crashing_pods: []
 
+
     - name: Process pods with container status lists
       ansible.builtin.set_fact:
         crashing_pods: "{{ crashing_pods + pod_failures }}"
@@ -61,18 +62,30 @@
             container_statuses
             | selectattr('state.waiting', 'defined')
             | selectattr('state.waiting.reason', 'defined')
-            | selectattr('state.waiting.reason', 'in',
-                ['CrashLoopBackOff', 'ErrImagePull', 'ImagePullBackOff',
-                 'CreateContainerError', 'RunContainerError'])
-            | map('combine', {
-                'namespace': item.metadata.namespace,
-                'pod': item.metadata.name
-              })
+            | selectattr(
+                'state.waiting.reason',
+                'in',
+                [
+                  'CrashLoopBackOff',
+                  'ErrImagePull',
+                  'ImagePullBackOff',
+                  'CreateContainerError',
+                  'RunContainerError'
+                ]
+              )
+            | map(
+                'combine',
+                {
+                  'namespace': item.metadata.namespace,
+                  'pod': item.metadata.name
+                }
+              )
             | list
           }}
-      loop: "{{ pod_query.json.items | default([], true) }}"
+      loop: "{{ pod_query.json['items'] | default([], true) }}"
       loop_control:
         label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+
 
     - name: Display crashing pod report
       ansible.builtin.debug:
