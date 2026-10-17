@@ -6,7 +6,6 @@
   gather_facts: false
 
   vars:
-    openshift_api_server: "https://api.sno.manohar.in:6443"
     failure_reasons:
       - CrashLoopBackOff
       - ErrImagePull
@@ -28,7 +27,7 @@
         return_content: true
         status_code: 200
       register: pod_query
-      no_log: true
+      no_log: false
 
     - name: Initialize crashing pod report
       ansible.builtin.set_fact:
@@ -76,7 +75,7 @@
         or (waiting_failures | length > 0)
         or (item.status.phase | default('') == 'Failed')
 
-    - name: Display only crashing pods
+    - name: Display crashing pods
       ansible.builtin.debug:
         var: crashing_pods
       when: crashing_pods | length > 0
