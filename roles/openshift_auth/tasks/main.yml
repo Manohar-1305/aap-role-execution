@@ -12,6 +12,8 @@
     status_code: 200
   register: vault_login
   no_log: true
+  failed_when: vault_login.status | default(0) != 200
+  ignore_errors: false
 
 - name: Read OpenShift credentials from Vault KV v2
   ansible.builtin.uri:
