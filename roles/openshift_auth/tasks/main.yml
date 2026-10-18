@@ -12,12 +12,10 @@
     status_code: 200
   register: vault_login
   no_log: true
-  failed_when: vault_login.status | default(0) != 200
-  ignore_errors: false
 
 - name: Read OpenShift credentials from Vault KV v2
   ansible.builtin.uri:
-    url: "{{ vault_addr }}/v1/secret/data/openshift/aap"
+    url: "{{ vault_addr }}/v1/secret/data/{{ vault_path }}"
     method: GET
     headers:
       X-Vault-Token: "{{ vault_login.json.auth.client_token }}"
