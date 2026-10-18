@@ -19,7 +19,6 @@
         return_content: true
         status_code: 200
       register: pod_query
-      no_log: true
 
     - name: Initialize crashing pod report
       ansible.builtin.set_fact:
