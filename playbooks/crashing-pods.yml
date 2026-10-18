@@ -1,4 +1,3 @@
-
 ---
 - name: Find crashing pods across OpenShift
   hosts: localhost
@@ -27,57 +26,69 @@
       register: pod_query
       changed_when: false
 
-    - name: Initialize crashing pod report
-      ansible.builtin.set_fact:
-        crashing_pods: []
-
-    - name: Process pods with container status lists
-      ansible.builtin.set_fact:
-        crashing_pods: "{{ crashing_pods + [pod_failure] }}"
-      vars:
-        container_statuses: "{{ item.status.containerStatuses | default([], true) }}"
-        failed_containers: >-
-          {{
-            container_statuses
-            | selectattr('state.terminated', 'defined')
-            | selectattr('state.terminated.exitCode', 'defined')
-            | selectattr('state.terminated.exitCode', 'ne', 0)
-            | map(attribute='name')
-            | list
-          }}
-        waiting_containers: >-
-          {{
-            container_statuses
-            | selectattr('state.waiting', 'defined')
-            | selectattr('state.waiting.reason', 'defined')
-            | selectattr(
-                'state.waiting.reason',
-                'in',
-                [
-                  'CrashLoopBackOff',
-                  'ErrImagePull',
-                  'ImagePullBackOff',
-                  'CreateContainerError',
-                  'RunContainerError'
-                ]
+    - name: Display only crashing pods
+      ansible.builtin.debug:
+        msg:
+          - "Namespace: {{ item.metadata.namespace }}"
+          - "Pod: {{ item.metadata.name }}"
+          - "Phase: {{ item.status.phase | default('Unknown') }}"
+          - >-
+            Crashing containers:
+            {{
+              (
+                item.status.containerStatuses | default([], true)
+                | selectattr('state.waiting.reason', 'defined')
+                | selectattr(
+                    'state.waiting.reason',
+                    'in',
+                    [
+                      'CrashLoopBackOff',
+                      'ErrImagePull',
+                      'ImagePullBackOff',
+                      'CreateContainerError',
+                      'RunContainerError'
+                    ]
+                  )
+                | map(attribute='name')
+                | list
               )
-            | map(attribute='name')
-            | list
-          }}
-        pod_failure:
-          namespace: "{{ item.metadata.namespace }}"
-          pod: "{{ item.metadata.name }}"
-          phase: "{{ item.status.phase | default('Unknown') }}"
-          failed_containers: "{{ failed_containers }}"
-          waiting_containers: "{{ waiting_containers }}"
+              +
+              (
+                item.status.containerStatuses | default([], true)
+                | selectattr('state.terminated.exitCode', 'defined')
+                | selectattr('state.terminated.exitCode', 'ne', 0)
+                | map(attribute='name')
+                | list
+              )
+            }}
       loop: "{{ pod_query.json['items'] | default([], true) }}"
       loop_control:
         label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
       when: >-
         (item.status.phase | default('')) == 'Failed'
-        or (failed_containers | length > 0)
-        or (waiting_containers | length > 0)
-
-    - name: Display crashing pod report
-      ansible.builtin.debug:
-        msg: "{{ crashing_pods if crashing_pods | length > 0 else ['No crashing containers found.'] }}"
+        or
+        (
+          item.status.containerStatuses | default([], true)
+          | selectattr('state.waiting.reason', 'defined')
+          | selectattr(
+              'state.waiting.reason',
+              'in',
+              [
+                'CrashLoopBackOff',
+                'ErrImagePull',
+                'ImagePullBackOff',
+                'CreateContainerError',
+                'RunContainerError'
+              ]
+            )
+          | list
+          | length > 0
+        )
+        or
+        (
+          item.status.containerStatuses | default([], true)
+          | selectattr('state.terminated.exitCode', 'defined')
+          | selectattr('state.terminated.exitCode', 'ne', 0)
+          | list
+          | length > 0
+        )
