@@ -394,7 +394,7 @@
     - name: Transfer SOS report to bastion
       ansible.builtin.expect:
         command: >-
-          scp -o StrictHostKeyChecking=no
+          scp -v -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null
           {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
           root@192.168.0.201:/tmp/
@@ -403,7 +403,6 @@
         timeout: 120
       delegate_to: localhost
       changed_when: true
-      no_log: true
 
     - name: Display generated SOS report location
       ansible.builtin.debug:
