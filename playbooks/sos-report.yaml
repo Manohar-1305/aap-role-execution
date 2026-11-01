@@ -188,7 +188,7 @@
             return_content: true
           register: scheduler_config
 
-        - name: Retrieve cluster operators configuration
+        - name: Retrieve cluster proxy configuration
           ansible.builtin.uri:
             url: "{{ openshift_api_url }}/apis/config.openshift.io/v1/proxies/cluster"
             method: GET
@@ -455,14 +455,14 @@
           Services: {{ services.json.items | length }}
           Routes: {{ cluster_routes.json.items | length }}
 
-  - name: Create compressed SOS report
-  ansible.builtin.command:
-    cmd: >-
-      tar -czf
-      {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
-      -C {{ sos_report_dir }}
-      sos-report-{{ timestamp }}
-  changed_when: true
+    - name: Create compressed SOS report
+      ansible.builtin.command:
+        cmd: >-
+          tar -czf
+          {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
+          -C {{ sos_report_dir }}
+          sos-report-{{ timestamp }}
+      changed_when: true
 
     - name: Display generated SOS report
       ansible.builtin.debug:
