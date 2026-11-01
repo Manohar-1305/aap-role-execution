@@ -309,6 +309,12 @@
           ansible.builtin.fail:
             msg: "OpenShift API collection failed. Check API connectivity, token permissions and API availability."
 
+    - name: Set report timestamp once
+      ansible.builtin.set_fact:
+        timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+      delegate_to: localhost
+      run_once: true
+
     - name: Create SOS report directory
       ansible.builtin.file:
         path: "{{ report_dir }}"
