@@ -388,90 +388,114 @@
           Services: {{ services.json.items | default([]) | length }}
           Routes: {{ cluster_routes.json.items | default([]) | length }}
     - name: Generate cluster summary
-      ansible.builtin.copy:
-        dest: "{{ report_dir }}/cluster-summary.txt"
-        mode: "0640"
-        content: |
-          OPENSHIFT SOS REPORT
-          ====================
-          Cluster API: {{ openshift_api_url }}
-          Generated: {{ timestamp }}
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import json
+        import os
 
-          CLUSTER VERSION
-          ===============
-          {% for version in cluster_version.json.items %}
-          Cluster: {{ version.metadata.name }}
-          Version: {{ version.status.desired.version | default('Unknown') }}
-          {% endfor %}
+        report_dir = "{{ report_dir }}"
+        output = os.path.join(report_dir, "cluster-summary.txt")
 
-          CLUSTER OPERATORS
-          =================
-          {% for operator in cluster_operators.json.items %}
-          Operator: {{ operator.metadata.name }}
-          {% for condition in operator.status.conditions | default([]) %}
-          {{ condition.type }}: {{ condition.status }}
-          Reason: {{ condition.reason | default('N/A') }}
-          Message: {{ condition.message | default('N/A') }}
-          {% endfor %}
-          ----------------------------------------
-          {% endfor %}
+        def load(name):
+            path = os.path.join(report_dir, name + ".json")
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
 
-          NODES
-          =====
-          Total nodes: {{ cluster_nodes.json.items | length }}
-          {% for node in cluster_nodes.json.items %}
-          Node: {{ node.metadata.name }}
-          Roles: {{ node.metadata.labels | dict2items | selectattr('key', 'search', 'node-role.kubernetes.io') | map(attribute='key') | list }}
-          {% for condition in node.status.conditions | default([]) %}
-          {{ condition.type }}: {{ condition.status }}
-          Reason: {{ condition.reason | default('N/A') }}
-          {% endfor %}
-          ----------------------------------------
-          {% endfor %}
+        def items(name):
+            data = load(name)
+            return data.get("items", []) if isinstance(data, dict) else []
 
-          POD SUMMARY
-          ===========
-          Total pods: {{ cluster_pods.json.items | length }}
-          {% for pod in cluster_pods.json.items %}
-          Namespace: {{ pod.metadata.namespace }}
-          Pod: {{ pod.metadata.name }}
-          Phase: {{ pod.status.phase | default('Unknown') }}
-          Node: {{ pod.spec.nodeName | default('Unscheduled') }}
-          ----------------------------------------
-          {% endfor %}
+        lines = [
+            "OPENSHIFT SOS REPORT",
+            "====================",
+            "Cluster API: {{ openshift_api_url }}",
+            "Generated: {{ timestamp }}",
+            "",
+            "CLUSTER VERSION",
+            "==============="
+        ]
 
-          EVENTS
-          ======
-          Total events: {{ cluster_events.json.items | length }}
-          {% for event in cluster_events.json.items %}
-          Namespace: {{ event.metadata.namespace | default('Cluster') }}
-          Type: {{ event.type | default('N/A') }}
-          Reason: {{ event.reason | default('N/A') }}
-          Object: {{ event.involvedObject.name | default('N/A') }}
-          Message: {{ event.message | default('N/A') }}
-          ----------------------------------------
-          {% endfor %}
+        for version in items("cluster-version"):
+            lines.append("Cluster: " + str(version.get("metadata", {}).get("name", "N/A")))
+            lines.append("Version: " + str(version.get("status", {}).get("desired", {}).get("version", "Unknown")))
 
-          RESOURCE COUNTS
-          ===============
-          Namespaces: {{ namespaces.json.items | length }}
-          Persistent Volumes: {{ persistent_volumes.json.items | length }}
-          Persistent Volume Claims: {{ persistent_volume_claims.json.items | length }}
-          Deployments: {{ deployments.json.items | length }}
-          DaemonSets: {{ daemonsets.json.items | length }}
-          StatefulSets: {{ statefulsets.json.items | length }}
-          Jobs: {{ jobs.json.items | length }}
-          CronJobs: {{ cronjobs.json.items | length }}
-          Services: {{ services.json.items | length }}
-          Routes: {{ cluster_routes.json.items | length }}
-    
-    - name: Create compressed SOS report
-      ansible.builtin.command:
-        cmd: >-
-          tar -czf
-          {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
-          -C {{ sos_report_dir }}
-          sos-report-{{ timestamp }}
+        lines += ["", "CLUSTER OPERATORS", "================="]
+
+        for operator in items("cluster-operators"):
+            lines.append("Operator: " + str(operator.get("metadata", {}).get("name", "N/A")))
+            for condition in operator.get("status", {}).get("conditions", []):
+                lines.append(str(condition.get("type", "N/A")) + ": " + str(condition.get("status", "N/A")))
+                lines.append("Reason: " + str(condition.get("reason", "N/A")))
+                lines.append("Message: " + str(condition.get("message", "N/A")))
+            lines.append("----------------------------------------")
+
+        lines += ["", "NODES", "====="]
+        nodes = items("nodes")
+        lines.append("Total nodes: " + str(len(nodes)))
+
+        for node in nodes:
+            metadata = node.get("metadata", {})
+            lines.append("Node: " + str(metadata.get("name", "N/A")))
+            labels = metadata.get("labels", {})
+            roles = [key for key in labels if key.startswith("node-role.kubernetes.io/")]
+            lines.append("Roles: " + ", ".join(roles))
+            for condition in node.get("status", {}).get("conditions", []):
+                lines.append(str(condition.get("type", "N/A")) + ": " + str(condition.get("status", "N/A")))
+                lines.append("Reason: " + str(condition.get("reason", "N/A")))
+            lines.append("----------------------------------------")
+
+        lines += ["", "POD SUMMARY", "==========="]
+        pods = items("pods")
+        lines.append("Total pods: " + str(len(pods)))
+
+        for pod in pods:
+            metadata = pod.get("metadata", {})
+            spec = pod.get("spec", {})
+            status = pod.get("status", {})
+            lines.append("Namespace: " + str(metadata.get("namespace", "N/A")))
+            lines.append("Pod: " + str(metadata.get("name", "N/A")))
+            lines.append("Phase: " + str(status.get("phase", "Unknown")))
+            lines.append("Node: " + str(spec.get("nodeName", "Unscheduled")))
+            lines.append("----------------------------------------")
+
+        lines += ["", "EVENTS", "======"]
+        events = items("events")
+        lines.append("Total events: " + str(len(events)))
+
+        for event in events:
+            metadata = event.get("metadata", {})
+            involved = event.get("involvedObject", {})
+            lines.append("Namespace: " + str(metadata.get("namespace", "Cluster")))
+            lines.append("Type: " + str(event.get("type", "N/A")))
+            lines.append("Reason: " + str(event.get("reason", "N/A")))
+            lines.append("Object: " + str(involved.get("name", "N/A")))
+            lines.append("Message: " + str(event.get("message", "N/A")))
+            lines.append("----------------------------------------")
+
+        resource_files = {
+            "Namespaces": "namespaces",
+            "Persistent Volumes": "persistent-volumes",
+            "Persistent Volume Claims": "persistent-volume-claims",
+            "Storage Classes": "storage-classes",
+            "Deployments": "deployments",
+            "DaemonSets": "daemonsets",
+            "StatefulSets": "statefulsets",
+            "Jobs": "jobs",
+            "CronJobs": "cronjobs",
+            "Services": "services",
+            "Routes": "routes"
+        }
+
+        lines += ["", "RESOURCE COUNTS", "==============="]
+
+        for label, filename in resource_files.items():
+            lines.append(label + ": " + str(len(items(filename))))
+
+        with open(output, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        PY
+      args:
+        executable: /bin/bash
       changed_when: true
 
     - name: Display generated SOS report
