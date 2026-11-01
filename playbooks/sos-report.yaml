@@ -433,3 +433,19 @@
           - "Archive: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
           - "Verify on bastion: ls -lh /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
 
+
+#    - name: Transfer SOS report to bastion
+#     ansible.builtin.copy:
+#        src: "{{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
+#        dest: "/tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+#        mode: "0640"
+#     delegate_to: bastion
+#     register: transfer_result
+
+#    - name: Display SOS report location
+#      ansible.builtin.debug:
+#        msg:
+#          - "SOS report generated successfully."
+#          - "Bastion: 192.168.0.201"
+#          - "Location: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+
