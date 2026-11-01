@@ -7,7 +7,7 @@
   vars:
     openshift_api_url: "https://api.sno.manohar.in:6443"
     openshift_token: "{{ lookup('env', 'OPENSHIFT_TOKEN') }}"
-    validate_certs: true
+    validate_certs: false
 
     sos_report_dir: "/tmp/openshift-sos-reports"
     timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
