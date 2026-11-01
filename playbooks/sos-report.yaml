@@ -391,22 +391,38 @@
       changed_when: true
 
  
+    - name: Locate compressed SOS report
+      ansible.builtin.find:
+        paths: "{{ sos_report_dir }}"
+        patterns: "openshift-sos-report-{{ timestamp }}.tar.gz"
+        recurse: true
+        file_type: file
+      register: sos_archive
+      delegate_to: localhost
+
+    - name: Verify SOS archive exists
+      ansible.builtin.assert:
+        that:
+          - sos_archive.matched | int > 0
+        fail_msg: "SOS archive was not found under {{ sos_report_dir }}"
+
     - name: Transfer SOS report to bastion
       ansible.builtin.expect:
         command: >-
-          scp -v -o StrictHostKeyChecking=no
+          scp -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null
-          {{ report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
+          {{ sos_archive.files[0].path }}
           root@192.168.0.201:/tmp/
         responses:
           '(?i)password:': "root"
         timeout: 120
       delegate_to: localhost
       changed_when: true
+      no_log: true
 
-    - name: Display generated SOS report location
+    - name: Display SOS report location
       ansible.builtin.debug:
         msg:
           - "SOS report transferred successfully."
           - "Bastion: 192.168.0.201"
-          - "Saved location: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - "Destination: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
