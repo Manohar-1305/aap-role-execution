@@ -393,87 +393,102 @@
         python3 - <<'PY'
         import json
         import os
-        from datetime import datetime
 
         report_dir = os.environ["REPORT_DIR"]
         output = os.path.join(report_dir, "cluster-summary.txt")
 
-        def items(filename):
+        def load_items(filename):
             path = os.path.join(report_dir, filename + ".json")
-            if not os.path.isfile(path):
+            if not os.path.exists(path):
                 return []
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            return data.get("items", []) if isinstance(data, dict) else []
+
+            with open(path, encoding="utf-8") as file:
+                data = json.load(file)
+
+            if isinstance(data, dict):
+                return data.get("items", [])
+            return []
+
+        def add_section(title):
+            lines.extend(["", title, "=" * len(title)])
+
+        def add_separator():
+            lines.append("-" * 40)
 
         lines = [
             "OPENSHIFT SOS REPORT",
             "====================",
             "Cluster API: " + os.environ["OPENSHIFT_API_URL"],
-            "Generated: " + os.environ["REPORT_TIMESTAMP"],
-            "",
-            "CLUSTER VERSION",
-            "==============="
+            "Generated: " + os.environ["REPORT_TIMESTAMP"]
         ]
 
-        for version in items("cluster-version"):
-            lines.append("Cluster: " + str(version.get("metadata", {}).get("name", "N/A")))
-            lines.append("Version: " + str(version.get("status", {}).get("desired", {}).get("version", "Unknown")))
+        add_section("CLUSTER VERSION")
+        for version in load_items("cluster-version"):
+            metadata = version.get("metadata", {})
+            status = version.get("status", {})
+            desired = status.get("desired", {})
+            lines.append("Cluster: " + str(metadata.get("name", "N/A")))
+            lines.append("Version: " + str(desired.get("version", "Unknown")))
 
-        lines += ["", "CLUSTER OPERATORS", "================="]
-
-        for operator in items("cluster-operators"):
+        add_section("CLUSTER OPERATORS")
+        for operator in load_items("cluster-operators"):
             lines.append("Operator: " + str(operator.get("metadata", {}).get("name", "N/A")))
             for condition in operator.get("status", {}).get("conditions", []):
                 lines.append(str(condition.get("type", "N/A")) + ": " + str(condition.get("status", "N/A")))
                 lines.append("Reason: " + str(condition.get("reason", "N/A")))
                 lines.append("Message: " + str(condition.get("message", "N/A")))
-            lines.append("----------------------------------------")
+            add_separator()
 
-        lines += ["", "NODES", "====="]
-        nodes = items("nodes")
+        add_section("NODES")
+        nodes = load_items("nodes")
         lines.append("Total nodes: " + str(len(nodes)))
 
         for node in nodes:
             metadata = node.get("metadata", {})
             lines.append("Node: " + str(metadata.get("name", "N/A")))
+
             roles = [
                 key.replace("node-role.kubernetes.io/", "")
                 for key in metadata.get("labels", {})
                 if key.startswith("node-role.kubernetes.io/")
             ]
             lines.append("Roles: " + ", ".join(roles))
+
             for condition in node.get("status", {}).get("conditions", []):
                 lines.append(str(condition.get("type", "N/A")) + ": " + str(condition.get("status", "N/A")))
-            lines.append("----------------------------------------")
+                lines.append("Reason: " + str(condition.get("reason", "N/A")))
 
-        lines += ["", "POD SUMMARY", "==========="]
-        pods = items("pods")
+            add_separator()
+
+        add_section("POD SUMMARY")
+        pods = load_items("pods")
         lines.append("Total pods: " + str(len(pods)))
 
         for pod in pods:
             metadata = pod.get("metadata", {})
             status = pod.get("status", {})
             spec = pod.get("spec", {})
+
             lines.append("Namespace: " + str(metadata.get("namespace", "N/A")))
             lines.append("Pod: " + str(metadata.get("name", "N/A")))
             lines.append("Phase: " + str(status.get("phase", "Unknown")))
             lines.append("Node: " + str(spec.get("nodeName", "Unscheduled")))
-            lines.append("----------------------------------------")
+            add_separator()
 
-        lines += ["", "EVENTS", "======"]
-        events = items("events")
+        add_section("EVENTS")
+        events = load_items("events")
         lines.append("Total events: " + str(len(events)))
 
         for event in events:
             metadata = event.get("metadata", {})
             involved = event.get("involvedObject", {})
+
             lines.append("Namespace: " + str(metadata.get("namespace", "Cluster")))
             lines.append("Type: " + str(event.get("type", "N/A")))
             lines.append("Reason: " + str(event.get("reason", "N/A")))
             lines.append("Object: " + str(involved.get("name", "N/A")))
             lines.append("Message: " + str(event.get("message", "N/A")))
-            lines.append("----------------------------------------")
+            add_separator()
 
         resource_files = {
             "Namespaces": "namespaces",
@@ -489,13 +504,14 @@
             "Routes": "routes"
         }
 
-        lines += ["", "RESOURCE COUNTS", "==============="]
-
+        add_section("RESOURCE COUNTS")
         for label, filename in resource_files.items():
-            lines.append(label + ": " + str(len(items(filename))))
+            lines.append(label + ": " + str(len(load_items(filename))))
 
-        with open(output, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+        with open(output, "w", encoding="utf-8") as file:
+            file.write("\n".join(lines) + "\n")
+
+        print("Cluster summary created: " + output)
         PY
       args:
         executable: /bin/bash
