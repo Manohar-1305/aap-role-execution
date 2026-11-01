@@ -437,7 +437,11 @@
             metadata = node.get("metadata", {})
             lines.append("Node: " + str(metadata.get("name", "N/A")))
             labels = metadata.get("labels", {})
-            roles = [key for key in labels if key.startswith("node-role.kubernetes.io/")]
+            roles = [
+                key.replace("node-role.kubernetes.io/", "")
+                for key in labels
+                if key.startswith("node-role.kubernetes.io/")
+            ]
             lines.append("Roles: " + ", ".join(roles))
             for condition in node.get("status", {}).get("conditions", []):
                 lines.append(str(condition.get("type", "N/A")) + ": " + str(condition.get("status", "N/A")))
