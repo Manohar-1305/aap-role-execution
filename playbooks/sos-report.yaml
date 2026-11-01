@@ -395,17 +395,22 @@
       ansible.builtin.expect:
         command: >-
           scp -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
           {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
           root@192.168.0.201:/tmp/
         responses:
           '(?i)password:': "root"
+        timeout: 120
       delegate_to: localhost
       changed_when: true
       no_log: true
 
-    - name: Display generated SOS report
+    - name: Display generated SOS report location
       ansible.builtin.debug:
         msg:
           - "OpenShift SOS report generated successfully."
-          - "Report directory: {{ report_dir }}"
-          - "Compressed report: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz on 192.168.0.201"
+          - "Bastion IP: 192.168.0.201"
+          - "Bastion username: root"
+          - "Saved TAR file: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - "Access command: ssh root@192.168.0.201"
+          - "Verify command: ls -lh /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
