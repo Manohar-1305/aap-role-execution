@@ -10,11 +10,16 @@
     validate_certs: false
     node_name: "sno.manohar.in"
     sos_report_dir: "/tmp/openshift-sos-reports"
-    timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
-    report_dir: "{{ sos_report_dir }}/node-sos-{{ timestamp }}"
-    node_archive: ""
 
   tasks:
+    - name: Set report timestamp
+      ansible.builtin.set_fact:
+        timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+
+    - name: Set report directory
+      ansible.builtin.set_fact:
+        report_dir: "{{ sos_report_dir }}/node-sos-{{ timestamp }}"
+
     - name: Verify OpenShift token
       ansible.builtin.assert:
         that:
@@ -32,12 +37,13 @@
         argv:
           - oc
           - login
-          - --server={{ openshift_api_url }}
-          - --token={{ openshift_token }}
-          - --insecure-skip-tls-verify=true
+          - "--server={{ openshift_api_url }}"
+          - "--token={{ openshift_token }}"
+          - "--insecure-skip-tls-verify=true"
       no_log: true
+      changed_when: false
 
-    - name: Check SOS is installed on SNO node
+    - name: Verify SOS is installed on SNO node
       ansible.builtin.command:
         argv:
           - oc
@@ -66,7 +72,7 @@
       register: sos_result
       changed_when: true
 
-    - name: Find generated SOS archive on SNO node
+    - name: Locate generated SOS archive on SNO node
       ansible.builtin.command:
         argv:
           - oc
@@ -77,15 +83,19 @@
           - /host
           - bash
           - -c
-          - "ls -t /var/tmp/sosreport-*.tar.* 2>/dev/null | head -1"
+          - "find /var/tmp -maxdepth 1 -type f -name 'sosreport-*.tar*' -printf '%T@ %p\\n' | sort -nr | head -1 | cut -d' ' -f2-"
       register: node_archive
       changed_when: false
 
-    - name: Verify SOS archive was generated
+    - name: Verify SOS archive exists
       ansible.builtin.assert:
         that:
           - node_archive.stdout | trim | length > 0
-        fail_msg: "SOS report archive was not found on the SNO node."
+        fail_msg: "SOS report archive was not found in /var/tmp on the SNO node."
+
+    - name: Set SOS archive filename
+      ansible.builtin.set_fact:
+        node_archive_name: "{{ node_archive.stdout | trim | basename }}"
 
     - name: Read SOS archive from SNO node
       ansible.builtin.command:
@@ -101,10 +111,11 @@
           - "{{ node_archive.stdout | trim }}"
       register: sos_base64
       changed_when: false
+      no_log: true
 
     - name: Save SOS archive in AAP execution environment
       ansible.builtin.shell: |
-        printf '%s' {{ sos_base64.stdout | quote }} | base64 -d > {{ (report_dir ~ '/sno-sos-report.tar.xz') | quote }}
+        printf '%s' {{ sos_base64.stdout | quote }} | base64 -d > {{ (report_dir ~ '/' ~ node_archive_name) | quote }}
       args:
         executable: /bin/bash
       changed_when: true
@@ -118,7 +129,8 @@
           - "{{ sos_report_dir }}/sno-node-sos-{{ timestamp }}.tar.gz"
           - -C
           - "{{ report_dir }}"
-          - sno-sos-report.tar.xz
+          - "{{ node_archive_name }}"
+      changed_when: true
 
     - name: Transfer node SOS report to bastion
       ansible.builtin.expect:
@@ -129,8 +141,9 @@
           root@192.168.0.201:/tmp/
         responses:
           '(?i)password:': "root"
-        timeout: 300
+        timeout: 600
       no_log: true
+      changed_when: true
 
     - name: Display report location
       ansible.builtin.debug:
