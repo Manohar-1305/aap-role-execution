@@ -314,6 +314,7 @@
         path: "{{ report_dir }}"
         state: directory
         mode: "0750"
+      delegate_to: localhost
 
     - name: Generate cluster summary
       ansible.builtin.copy:
@@ -327,8 +328,7 @@
 
           CLUSTER VERSION
           ===============
-          Cluster: {{ cluster_version.json['items'][0]['metadata']['name'] | default('N/A') }}
-          Version: {{ cluster_version.json['items'][0]['status']['desired']['version'] | default('Unknown') }}
+          {{ cluster_version.json | to_nice_yaml }}
 
           CLUSTER OPERATORS
           =================
@@ -381,8 +381,10 @@
           ROUTES
           ======
           {{ cluster_routes.json | to_nice_yaml }}
+      delegate_to: localhost
       changed_when: true
 
+ 
     - name: Display generated SOS report
       ansible.builtin.debug:
         msg:
