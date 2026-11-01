@@ -1,4 +1,2 @@
 collections:
-  - name: community.hashi_vault
-  - name: kubernetes.core
   - name: community.general
