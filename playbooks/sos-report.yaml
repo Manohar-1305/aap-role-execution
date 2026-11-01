@@ -396,4 +396,16 @@
         msg:
           - "OpenShift SOS report generated successfully."
 
-
+    - name: Transfer SOS report to bastion
+      ansible.builtin.expect:
+        command: >-
+          scp -o StrictHostKeyChecking=no
+          {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
+          root@192.168.0.201:/tmp/
+        responses:
+          (?i)password: "root"
+      delegate_to: localhost
+      changed_when: true
+      no_log: true
+          - "Report directory: {{ report_dir }}"
+          - "Compressed report: {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
