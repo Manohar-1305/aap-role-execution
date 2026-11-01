@@ -1,0 +1,141 @@
+---
+- name: Collect SNO Node SOS Report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    openshift_api_url: "https://api.sno.manohar.in:6443"
+    openshift_token: "{{ lookup('env', 'OPENSHIFT_TOKEN') }}"
+    validate_certs: false
+    node_name: "sno.manohar.in"
+    sos_report_dir: "/tmp/openshift-sos-reports"
+    timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+    report_dir: "{{ sos_report_dir }}/node-sos-{{ timestamp }}"
+    node_archive: ""
+
+  tasks:
+    - name: Verify OpenShift token
+      ansible.builtin.assert:
+        that:
+          - openshift_token | length > 0
+        fail_msg: "OPENSHIFT_TOKEN is not available."
+
+    - name: Create report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Login to OpenShift
+      ansible.builtin.command:
+        argv:
+          - oc
+          - login
+          - --server={{ openshift_api_url }}
+          - --token={{ openshift_token }}
+          - --insecure-skip-tls-verify=true
+      no_log: true
+
+    - name: Check SOS is installed on SNO node
+      ansible.builtin.command:
+        argv:
+          - oc
+          - debug
+          - "node/{{ node_name }}"
+          - --
+          - chroot
+          - /host
+          - sos
+          - --version
+      register: sos_version
+      changed_when: false
+
+    - name: Generate SOS report on SNO node
+      ansible.builtin.command:
+        argv:
+          - oc
+          - debug
+          - "node/{{ node_name }}"
+          - --
+          - chroot
+          - /host
+          - sos
+          - report
+          - --batch
+      register: sos_result
+      changed_when: true
+
+    - name: Find generated SOS archive on SNO node
+      ansible.builtin.command:
+        argv:
+          - oc
+          - debug
+          - "node/{{ node_name }}"
+          - --
+          - chroot
+          - /host
+          - bash
+          - -c
+          - "ls -t /var/tmp/sosreport-*.tar.* 2>/dev/null | head -1"
+      register: node_archive
+      changed_when: false
+
+    - name: Verify SOS archive was generated
+      ansible.builtin.assert:
+        that:
+          - node_archive.stdout | trim | length > 0
+        fail_msg: "SOS report archive was not found on the SNO node."
+
+    - name: Read SOS archive from SNO node
+      ansible.builtin.command:
+        argv:
+          - oc
+          - debug
+          - "node/{{ node_name }}"
+          - --
+          - chroot
+          - /host
+          - base64
+          - -w0
+          - "{{ node_archive.stdout | trim }}"
+      register: sos_base64
+      changed_when: false
+
+    - name: Save SOS archive in AAP execution environment
+      ansible.builtin.shell: |
+        printf '%s' {{ sos_base64.stdout | quote }} | base64 -d > {{ (report_dir ~ '/sno-sos-report.tar.xz') | quote }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Create compressed node SOS package
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -czf
+          - "{{ sos_report_dir }}/sno-node-sos-{{ timestamp }}.tar.gz"
+          - -C
+          - "{{ report_dir }}"
+          - sno-sos-report.tar.xz
+
+    - name: Transfer node SOS report to bastion
+      ansible.builtin.expect:
+        command: >-
+          scp -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ sos_report_dir }}/sno-node-sos-{{ timestamp }}.tar.gz
+          root@192.168.0.201:/tmp/
+        responses:
+          '(?i)password:': "root"
+        timeout: 300
+      no_log: true
+
+    - name: Display report location
+      ansible.builtin.debug:
+        msg:
+          - "SNO node SOS report completed."
+          - "Node: {{ node_name }}"
+          - "Bastion: 192.168.0.201"
+          - "Archive: /tmp/sno-node-sos-{{ timestamp }}.tar.gz"
