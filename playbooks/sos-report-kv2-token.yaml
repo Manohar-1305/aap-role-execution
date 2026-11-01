@@ -1,0 +1,463 @@
+---
+- name: Generate OpenShift SOS Report using OpenShift REST API
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    openshift_api_url: "https://api.sno.manohar.in:6443"
+
+    openshift_token: >-
+      {{
+        lookup(
+          'community.hashi_vault.vault_kv2_get',
+          'openshift/sno',
+          engine_mount_point='secret',
+          url='https://VAULT_URL:8200',
+          auth_method='approle',
+          role_id=lookup('env', 'ANSIBLE_HASHI_VAULT_ROLE_ID'),
+          secret_id=lookup('env', 'ANSIBLE_HASHI_VAULT_SECRET_ID')
+        ).secret.openshift_token
+      }}
+
+    validate_certs: false
+
+    sos_report_dir: "/tmp/openshift-sos-reports"
+    timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+    report_dir: "{{ sos_report_dir }}/sos-report-{{ timestamp }}"
+
+    api_headers:
+      Authorization: "Bearer {{ openshift_token }}"
+      Accept: "application/json"
+
+  tasks:
+
+    - name: Validate OpenShift API token
+      ansible.builtin.assert:
+        that:
+          - openshift_token | length > 0
+        fail_msg: "OPENSHIFT_TOKEN is missing. Configure it in the AAP credential."
+
+    - name: Create SOS report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Collect OpenShift cluster information
+      block:
+
+        - name: Retrieve cluster version
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/config.openshift.io/v1/clusterversions"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cluster_version
+
+        - name: Retrieve cluster operators
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/config.openshift.io/v1/clusteroperators"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cluster_operators
+
+        - name: Retrieve nodes
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/api/v1/nodes"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cluster_nodes
+
+        - name: Retrieve namespaces
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/api/v1/namespaces"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: namespaces
+
+        - name: Retrieve all pods
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/api/v1/pods"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cluster_pods
+
+        - name: Retrieve cluster events
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/api/v1/events"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cluster_events
+
+        - name: Retrieve persistent volumes
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/api/v1/persistentvolumes"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: persistent_volumes
+
+        - name: Retrieve persistent volume claims
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/api/v1/persistentvolumeclaims"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: persistent_volume_claims
+
+        - name: Retrieve storage classes
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/storage.k8s.io/v1/storageclasses"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: storage_classes
+
+        - name: Retrieve machine config pools
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/machineconfiguration.openshift.io/v1/machineconfigpools"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: machine_config_pools
+
+        - name: Retrieve machine configs
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/machineconfiguration.openshift.io/v1/machineconfigs"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: machine_configs
+
+        - name: Retrieve routes
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/route.openshift.io/v1/routes"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cluster_routes
+
+        - name: Retrieve network configuration
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/config.openshift.io/v1/networks/cluster"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: network_config
+
+        - name: Retrieve authentication configuration
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/config.openshift.io/v1/authentications/cluster"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: authentication_config
+
+        - name: Retrieve image registry configuration
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/imageregistry.operator.openshift.io/v1/configs/cluster"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: image_registry
+
+        - name: Retrieve infrastructure configuration
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/config.openshift.io/v1/infrastructures/cluster"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: infrastructure_config
+
+        - name: Retrieve cluster scheduler configuration
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/config.openshift.io/v1/schedulers/cluster"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: scheduler_config
+
+        - name: Retrieve cluster proxy configuration
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/config.openshift.io/v1/proxies/cluster"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: proxy_config
+
+        - name: Retrieve API services
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/apiregistration.k8s.io/v1/apiservices"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: api_services
+
+        - name: Retrieve deployments
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/apps/v1/deployments"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: deployments
+
+        - name: Retrieve daemonsets
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/apps/v1/daemonsets"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: daemonsets
+
+        - name: Retrieve statefulsets
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/apps/v1/statefulsets"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: statefulsets
+
+        - name: Retrieve jobs
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/batch/v1/jobs"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: jobs
+
+        - name: Retrieve cronjobs
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/batch/v1/cronjobs"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cronjobs
+
+        - name: Retrieve services
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/api/v1/services"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: services
+
+        - name: Retrieve endpoints
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/api/v1/endpoints"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: endpoints
+
+        - name: Retrieve network policies
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/networking.k8s.io/v1/networkpolicies"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: network_policies
+
+        - name: Retrieve security context constraints
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/security.openshift.io/v1/securitycontextconstraints"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: security_context_constraints
+
+        - name: Retrieve cluster role bindings
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cluster_role_bindings
+
+        - name: Retrieve cluster roles
+          ansible.builtin.uri:
+            url: "{{ openshift_api_url }}/apis/rbac.authorization.k8s.io/v1/clusterroles"
+            method: GET
+            headers: "{{ api_headers }}"
+            validate_certs: "{{ validate_certs }}"
+            return_content: true
+          register: cluster_roles
+
+      rescue:
+        - name: Report API collection failure
+          ansible.builtin.fail:
+            msg: "OpenShift API collection failed. Check API connectivity, token permissions and API availability."
+
+    - name: Set report timestamp once
+      ansible.builtin.set_fact:
+        timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Create SOS report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0750"
+      delegate_to: localhost
+
+    - name: Generate cluster summary
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/cluster-summary.txt"
+        mode: "0644"
+        content: |
+          OPENSHIFT SOS REPORT
+          ====================
+          Cluster API: {{ openshift_api_url }}
+          Generated: {{ timestamp }}
+
+          CLUSTER VERSION
+          ===============
+          {{ cluster_version.json | to_nice_yaml }}
+
+          CLUSTER OPERATORS
+          =================
+          {{ cluster_operators.json | to_nice_yaml }}
+
+          NODES
+          =====
+          {{ cluster_nodes.json | to_nice_yaml }}
+
+          PODS
+          ====
+          {{ cluster_pods.json | to_nice_yaml }}
+
+          EVENTS
+          ======
+          {{ cluster_events.json | to_nice_yaml }}
+
+          NAMESPACES
+          ==========
+          {{ namespaces.json | to_nice_yaml }}
+
+          PERSISTENT VOLUMES
+          ==================
+          {{ persistent_volumes.json | to_nice_yaml }}
+
+          PERSISTENT VOLUME CLAIMS
+          ========================
+          {{ persistent_volume_claims.json | to_nice_yaml }}
+
+          STORAGE CLASSES
+          ===============
+          {{ storage_classes.json | to_nice_yaml }}
+
+          DEPLOYMENTS
+          ===========
+          {{ deployments.json | to_nice_yaml }}
+
+          DAEMONSETS
+          ==========
+          {{ daemonsets.json | to_nice_yaml }}
+
+          STATEFULSETS
+          ============
+          {{ statefulsets.json | to_nice_yaml }}
+
+          SERVICES
+          ========
+          {{ services.json | to_nice_yaml }}
+
+          ROUTES
+          ======
+          {{ cluster_routes.json | to_nice_yaml }}
+      delegate_to: localhost
+      changed_when: true
+
+ 
+    - name: Create compressed SOS report
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -czf
+          - "{{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - -C
+          - "{{ sos_report_dir }}"
+          - "sos-report-{{ timestamp }}"
+      delegate_to: localhost
+      register: tar_result
+      changed_when: true
+
+    - name: Verify compressed SOS report
+      ansible.builtin.stat:
+        path: "{{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
+      register: sos_archive
+      delegate_to: localhost
+
+    - name: Transfer SOS report to bastion
+      ansible.builtin.expect:
+        command: >-
+          scp -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
+          root@192.168.0.201:/tmp/
+        responses:
+          '(?i)password:': "root"
+        timeout: 120
+      delegate_to: localhost
+      when: sos_archive.stat.exists
+      changed_when: true
+      no_log: true
+
+    - name: Display SOS report location
+      ansible.builtin.debug:
+        msg:
+          - "SOS report saved and transferred successfully."
+          - "Bastion: 192.168.0.201"
+          - "Archive: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - "Verify on bastion: ls -lh /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+
+
+#    - name: Transfer SOS report to bastion
+#     ansible.builtin.copy:
+#        src: "{{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
+#        dest: "/tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+#        mode: "0640"
+#     delegate_to: bastion
+#     register: transfer_result
+
+#    - name: Display SOS report location
+#      ansible.builtin.debug:
+#        msg:
+#          - "SOS report generated successfully."
+#          - "Bastion: 192.168.0.201"
+#          - "Location: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
