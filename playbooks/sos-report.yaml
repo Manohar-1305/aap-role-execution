@@ -391,11 +391,6 @@
       changed_when: true
 
  
-    - name: Display generated SOS report
-      ansible.builtin.debug:
-        msg:
-          - "OpenShift SOS report generated successfully."
-
     - name: Transfer SOS report to bastion
       ansible.builtin.expect:
         command: >-
@@ -403,9 +398,14 @@
           {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
           root@192.168.0.201:/tmp/
         responses:
-          (?i)password: "root"
+          '(?i)password:': "root"
       delegate_to: localhost
       changed_when: true
       no_log: true
+
+    - name: Display generated SOS report
+      ansible.builtin.debug:
+        msg:
+          - "OpenShift SOS report generated successfully."
           - "Report directory: {{ report_dir }}"
-          - "Compressed report: {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - "Compressed report: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz on 192.168.0.201"
