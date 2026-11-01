@@ -1,0 +1,77 @@
+---
+- name: Collect OpenShift Cluster Inspect
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    openshift_api_url: "https://api.sno.manohar.in:6443"
+    openshift_token: "{{ lookup('env', 'OPENSHIFT_TOKEN') }}"
+    validate_certs: false
+    node_name: "sno.manohar.in"
+    sos_report_dir: "/tmp/openshift-sos-reports"
+    timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+    report_dir: "{{ sos_report_dir }}/inspect-{{ timestamp }}"
+
+  tasks:
+    - name: Verify OpenShift token
+      ansible.builtin.assert:
+        that:
+          - openshift_token | length > 0
+        fail_msg: "OPENSHIFT_TOKEN is not available."
+
+    - name: Create report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Login to OpenShift
+      ansible.builtin.command:
+        argv:
+          - oc
+          - login
+          - --server={{ openshift_api_url }}
+          - --token={{ openshift_token }}
+          - --insecure-skip-tls-verify=true
+      no_log: true
+
+    - name: Run oc adm inspect cluster
+      ansible.builtin.command:
+        argv:
+          - oc
+          - adm
+          - inspect
+          - cluster
+          - --dest-dir={{ report_dir }}/cluster-inspect
+      register: inspect_result
+      changed_when: true
+
+    - name: Create compressed inspect report
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -czf
+          - "{{ sos_report_dir }}/openshift-inspect-{{ timestamp }}.tar.gz"
+          - -C
+          - "{{ report_dir }}"
+          - cluster-inspect
+
+    - name: Transfer inspect report to bastion
+      ansible.builtin.expect:
+        command: >-
+          scp -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ sos_report_dir }}/openshift-inspect-{{ timestamp }}.tar.gz
+          root@192.168.0.201:/tmp/
+        responses:
+          '(?i)password:': "root"
+        timeout: 300
+      no_log: true
+
+    - name: Display report location
+      ansible.builtin.debug:
+        msg:
+          - "OpenShift cluster inspect completed."
+          - "Bastion: 192.168.0.201"
+          - "Archive: /tmp/openshift-inspect-{{ timestamp }}.tar.gz"
