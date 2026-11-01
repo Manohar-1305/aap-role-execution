@@ -309,73 +309,84 @@
           ansible.builtin.fail:
             msg: "OpenShift API collection failed. Check API connectivity, token permissions and API availability."
 
-    - name: Save collected API responses
+    - name: Generate cluster summary
       ansible.builtin.copy:
-        content: "{{ item.data | to_nice_json }}"
-        dest: "{{ report_dir }}/{{ item.name }}.json"
+        dest: "{{ report_dir }}/cluster-summary.txt"
         mode: "0640"
-      loop:
-        - name: cluster-version
-          data: "{{ cluster_version.json }}"
-        - name: cluster-operators
-          data: "{{ cluster_operators.json }}"
-        - name: nodes
-          data: "{{ cluster_nodes.json }}"
-        - name: namespaces
-          data: "{{ namespaces.json }}"
-        - name: pods
-          data: "{{ cluster_pods.json }}"
-        - name: events
-          data: "{{ cluster_events.json }}"
-        - name: persistent-volumes
-          data: "{{ persistent_volumes.json }}"
-        - name: persistent-volume-claims
-          data: "{{ persistent_volume_claims.json }}"
-        - name: storage-classes
-          data: "{{ storage_classes.json }}"
-        - name: machine-config-pools
-          data: "{{ machine_config_pools.json }}"
-        - name: machine-configs
-          data: "{{ machine_configs.json }}"
-        - name: routes
-          data: "{{ cluster_routes.json }}"
-        - name: network-config
-          data: "{{ network_config.json }}"
-        - name: authentication-config
-          data: "{{ authentication_config.json }}"
-        - name: image-registry
-          data: "{{ image_registry.json }}"
-        - name: infrastructure-config
-          data: "{{ infrastructure_config.json }}"
-        - name: scheduler-config
-          data: "{{ scheduler_config.json }}"
-        - name: proxy-config
-          data: "{{ proxy_config.json }}"
-        - name: api-services
-          data: "{{ api_services.json }}"
-        - name: deployments
-          data: "{{ deployments.json }}"
-        - name: daemonsets
-          data: "{{ daemonsets.json }}"
-        - name: statefulsets
-          data: "{{ statefulsets.json }}"
-        - name: jobs
-          data: "{{ jobs.json }}"
-        - name: cronjobs
-          data: "{{ cronjobs.json }}"
-        - name: services
-          data: "{{ services.json }}"
-        - name: endpoints
-          data: "{{ endpoints.json }}"
-        - name: network-policies
-          data: "{{ network_policies.json }}"
-        - name: security-context-constraints
-          data: "{{ security_context_constraints.json }}"
-        - name: cluster-role-bindings
-          data: "{{ cluster_role_bindings.json }}"
-        - name: cluster-roles
-          data: "{{ cluster_roles.json }}"
+        content: |
+          OPENSHIFT SOS REPORT
+          ====================
+          Cluster API: {{ openshift_api_url }}
+          Generated: {{ timestamp }}
 
+          CLUSTER VERSION
+          ===============
+          {% for version in cluster_version.json.items | default([]) %}
+          Cluster: {{ version.metadata.name }}
+          Version: {{ version.status.desired.version | default('Unknown') }}
+          {% endfor %}
+
+          CLUSTER OPERATORS
+          =================
+          {% for operator in cluster_operators.json.items | default([]) %}
+          Operator: {{ operator.metadata.name }}
+          {% for condition in operator.status.conditions | default([]) %}
+          {{ condition.type }}: {{ condition.status }}
+          Reason: {{ condition.reason | default('N/A') }}
+          Message: {{ condition.message | default('N/A') }}
+          {% endfor %}
+          ----------------------------------------
+
+          {% endfor %}
+          NODES
+          =====
+          Total nodes: {{ cluster_nodes.json.items | default([]) | length }}
+          {% for node in cluster_nodes.json.items | default([]) %}
+          Node: {{ node.metadata.name }}
+          Roles: {{ node.metadata.labels | default({}) | dict2items | selectattr('key', 'search', 'node-role.kubernetes.io') | map(attribute='key') | list }}
+          {% for condition in node.status.conditions | default([]) %}
+          {{ condition.type }}: {{ condition.status }}
+          Reason: {{ condition.reason | default('N/A') }}
+          {% endfor %}
+          ----------------------------------------
+
+          {% endfor %}
+          POD SUMMARY
+          ===========
+          Total pods: {{ cluster_pods.json.items | default([]) | length }}
+          {% for pod in cluster_pods.json.items | default([]) %}
+          Namespace: {{ pod.metadata.namespace }}
+          Pod: {{ pod.metadata.name }}
+          Phase: {{ pod.status.phase | default('Unknown') }}
+          Node: {{ pod.spec.nodeName | default('Unscheduled') }}
+          ----------------------------------------
+
+          {% endfor %}
+          EVENTS
+          ======
+          Total events: {{ cluster_events.json.items | default([]) | length }}
+          {% for event in cluster_events.json.items | default([]) %}
+          Namespace: {{ event.metadata.namespace | default('Cluster') }}
+          Type: {{ event.type | default('N/A') }}
+          Reason: {{ event.reason | default('N/A') }}
+          Object: {{ event.involvedObject.name | default('N/A') }}
+          Message: {{ event.message | default('N/A') }}
+          ----------------------------------------
+
+          {% endfor %}
+          RESOURCE COUNTS
+          ===============
+          Namespaces: {{ namespaces.json.items | default([]) | length }}
+          Persistent Volumes: {{ persistent_volumes.json.items | default([]) | length }}
+          Persistent Volume Claims: {{ persistent_volume_claims.json.items | default([]) | length }}
+          Storage Classes: {{ storage_classes.json.items | default([]) | length }}
+          Deployments: {{ deployments.json.items | default([]) | length }}
+          DaemonSets: {{ daemonsets.json.items | default([]) | length }}
+          StatefulSets: {{ statefulsets.json.items | default([]) | length }}
+          Jobs: {{ jobs.json.items | default([]) | length }}
+          CronJobs: {{ cronjobs.json.items | default([]) | length }}
+          Services: {{ services.json.items | default([]) | length }}
+          Routes: {{ cluster_routes.json.items | default([]) | length }}
     - name: Generate cluster summary
       ansible.builtin.copy:
         dest: "{{ report_dir }}/cluster-summary.txt"
@@ -453,7 +464,7 @@
           CronJobs: {{ cronjobs.json.items | length }}
           Services: {{ services.json.items | length }}
           Routes: {{ cluster_routes.json.items | length }}
-
+    
     - name: Create compressed SOS report
       ansible.builtin.command:
         cmd: >-
