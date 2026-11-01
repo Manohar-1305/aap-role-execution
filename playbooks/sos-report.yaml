@@ -387,29 +387,30 @@
           CronJobs: {{ cronjobs.json.items | default([]) | length }}
           Services: {{ services.json.items | default([]) | length }}
           Routes: {{ cluster_routes.json.items | default([]) | length }}
+
     - name: Generate cluster summary
       ansible.builtin.shell: |
         python3 - <<'PY'
         import json
         import os
+        from datetime import datetime
 
-        report_dir = "{{ report_dir }}"
+        report_dir = os.environ["REPORT_DIR"]
         output = os.path.join(report_dir, "cluster-summary.txt")
 
-        def load(name):
-            path = os.path.join(report_dir, name + ".json")
+        def items(filename):
+            path = os.path.join(report_dir, filename + ".json")
+            if not os.path.isfile(path):
+                return []
             with open(path, encoding="utf-8") as f:
-                return json.load(f)
-
-        def items(name):
-            data = load(name)
+                data = json.load(f)
             return data.get("items", []) if isinstance(data, dict) else []
 
         lines = [
             "OPENSHIFT SOS REPORT",
             "====================",
-            "Cluster API: {{ openshift_api_url }}",
-            "Generated: {{ timestamp }}",
+            "Cluster API: " + os.environ["OPENSHIFT_API_URL"],
+            "Generated: " + os.environ["REPORT_TIMESTAMP"],
             "",
             "CLUSTER VERSION",
             "==============="
@@ -436,16 +437,14 @@
         for node in nodes:
             metadata = node.get("metadata", {})
             lines.append("Node: " + str(metadata.get("name", "N/A")))
-            labels = metadata.get("labels", {})
             roles = [
                 key.replace("node-role.kubernetes.io/", "")
-                for key in labels
+                for key in metadata.get("labels", {})
                 if key.startswith("node-role.kubernetes.io/")
             ]
             lines.append("Roles: " + ", ".join(roles))
             for condition in node.get("status", {}).get("conditions", []):
                 lines.append(str(condition.get("type", "N/A")) + ": " + str(condition.get("status", "N/A")))
-                lines.append("Reason: " + str(condition.get("reason", "N/A")))
             lines.append("----------------------------------------")
 
         lines += ["", "POD SUMMARY", "==========="]
@@ -454,8 +453,8 @@
 
         for pod in pods:
             metadata = pod.get("metadata", {})
-            spec = pod.get("spec", {})
             status = pod.get("status", {})
+            spec = pod.get("spec", {})
             lines.append("Namespace: " + str(metadata.get("namespace", "N/A")))
             lines.append("Pod: " + str(metadata.get("name", "N/A")))
             lines.append("Phase: " + str(status.get("phase", "Unknown")))
@@ -500,6 +499,10 @@
         PY
       args:
         executable: /bin/bash
+      environment:
+        REPORT_DIR: "{{ report_dir }}"
+        OPENSHIFT_API_URL: "{{ openshift_api_url }}"
+        REPORT_TIMESTAMP: "{{ timestamp }}"
       changed_when: true
 
     - name: Display generated SOS report
