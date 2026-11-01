@@ -1,19 +1,12 @@
-
 ---
 - name: Generate OpenShift SOS Report using OpenShift REST API
   hosts: localhost
   connection: local
   gather_facts: false
 
-  vars_prompt:
-    - name: openshift_token_prompt
-      prompt: "Enter OpenShift API token (leave blank if supplied by AAP)"
-      private: true
-      default: ""
-
   vars:
     openshift_api_url: "https://api.sno.manohar.in:6443"
-    openshift_token: "{{ lookup('env', 'OPENSHIFT_TOKEN') | default(openshift_token_prompt, true) }}"
+    openshift_token: "{{ OPENSHIFT_TOKEN }}"
     validate_certs: true
 
     sos_report_dir: "/tmp/openshift-sos-reports"
@@ -30,7 +23,7 @@
       ansible.builtin.assert:
         that:
           - openshift_token | length > 0
-        fail_msg: "OpenShift API token is missing. Configure OPENSHIFT_TOKEN in AAP or provide it when prompted."
+        fail_msg: "OPENSHIFT_TOKEN is missing. Configure it in the AAP credential."
 
     - name: Create SOS report directory
       ansible.builtin.file:
