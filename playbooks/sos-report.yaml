@@ -396,7 +396,7 @@
         command: >-
           scp -v -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null
-          {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
+          {{ report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
           root@192.168.0.201:/tmp/
         responses:
           '(?i)password:': "root"
@@ -407,9 +407,6 @@
     - name: Display generated SOS report location
       ansible.builtin.debug:
         msg:
-          - "OpenShift SOS report generated successfully."
-          - "Bastion IP: 192.168.0.201"
-          - "Bastion username: root"
-          - "Saved TAR file: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
-          - "Access command: ssh root@192.168.0.201"
-          - "Verify command: ls -lh /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - "SOS report transferred successfully."
+          - "Bastion: 192.168.0.201"
+          - "Saved location: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
