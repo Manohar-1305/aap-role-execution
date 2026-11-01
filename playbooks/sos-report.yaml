@@ -455,11 +455,14 @@
           Services: {{ services.json.items | length }}
           Routes: {{ cluster_routes.json.items | length }}
 
-    - name: Create compressed SOS report
-      community.general.archive:
-        path: "{{ report_dir }}"
-        dest: "{{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
-        format: gz
+  - name: Create compressed SOS report
+  ansible.builtin.command:
+    cmd: >-
+      tar -czf
+      {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
+      -C {{ sos_report_dir }}
+      sos-report-{{ timestamp }}
+  changed_when: true
 
     - name: Display generated SOS report
       ansible.builtin.debug:
