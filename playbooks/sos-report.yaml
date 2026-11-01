@@ -389,136 +389,71 @@
           Routes: {{ cluster_routes.json.items | default([]) | length }}
 
     - name: Generate cluster summary
-      ansible.builtin.shell: |
-        python3 - <<'PY'
-        import json
-        import os
+      ansible.builtin.copy:
+        dest: "{{ report_dir }}/cluster-summary.txt"
+        mode: "0644"
+        content: |
+          OPENSHIFT SOS REPORT
+          ====================
+          Cluster API: {{ openshift_api_url }}
+          Generated: {{ timestamp }}
 
-        report_dir = os.environ["REPORT_DIR"]
-        output = os.path.join(report_dir, "cluster-summary.txt")
+          CLUSTER VERSION
+          ===============
+          Cluster: {{ cluster_version.json['items'][0]['metadata']['name'] | default('N/A') }}
+          Version: {{ cluster_version.json['items'][0]['status']['desired']['version'] | default('Unknown') }}
 
-        def load_items(filename):
-            path = os.path.join(report_dir, filename + ".json")
-            if not os.path.exists(path):
-                return []
+          CLUSTER OPERATORS
+          =================
+          {{ cluster_operators.json | to_nice_yaml }}
 
-            with open(path, encoding="utf-8") as file:
-                data = json.load(file)
+          NODES
+          =====
+          {{ cluster_nodes.json | to_nice_yaml }}
 
-            if isinstance(data, dict):
-                return data.get("items", [])
-            return []
+          PODS
+          ====
+          {{ cluster_pods.json | to_nice_yaml }}
 
-        def add_section(title):
-            lines.extend(["", title, "=" * len(title)])
+          EVENTS
+          ======
+          {{ cluster_events.json | to_nice_yaml }}
 
-        def add_separator():
-            lines.append("-" * 40)
+          NAMESPACES
+          ==========
+          {{ namespaces.json | to_nice_yaml }}
 
-        lines = [
-            "OPENSHIFT SOS REPORT",
-            "====================",
-            "Cluster API: " + os.environ["OPENSHIFT_API_URL"],
-            "Generated: " + os.environ["REPORT_TIMESTAMP"]
-        ]
+          PERSISTENT VOLUMES
+          ==================
+          {{ persistent_volumes.json | to_nice_yaml }}
 
-        add_section("CLUSTER VERSION")
-        for version in load_items("cluster-version"):
-            metadata = version.get("metadata", {})
-            status = version.get("status", {})
-            desired = status.get("desired", {})
-            lines.append("Cluster: " + str(metadata.get("name", "N/A")))
-            lines.append("Version: " + str(desired.get("version", "Unknown")))
+          PERSISTENT VOLUME CLAIMS
+          ========================
+          {{ persistent_volume_claims.json | to_nice_yaml }}
 
-        add_section("CLUSTER OPERATORS")
-        for operator in load_items("cluster-operators"):
-            lines.append("Operator: " + str(operator.get("metadata", {}).get("name", "N/A")))
-            for condition in operator.get("status", {}).get("conditions", []):
-                lines.append(str(condition.get("type", "N/A")) + ": " + str(condition.get("status", "N/A")))
-                lines.append("Reason: " + str(condition.get("reason", "N/A")))
-                lines.append("Message: " + str(condition.get("message", "N/A")))
-            add_separator()
+          STORAGE CLASSES
+          ===============
+          {{ storage_classes.json | to_nice_yaml }}
 
-        add_section("NODES")
-        nodes = load_items("nodes")
-        lines.append("Total nodes: " + str(len(nodes)))
+          DEPLOYMENTS
+          ===========
+          {{ deployments.json | to_nice_yaml }}
 
-        for node in nodes:
-            metadata = node.get("metadata", {})
-            lines.append("Node: " + str(metadata.get("name", "N/A")))
+          DAEMONSETS
+          ==========
+          {{ daemonsets.json | to_nice_yaml }}
 
-            roles = [
-                key.replace("node-role.kubernetes.io/", "")
-                for key in metadata.get("labels", {})
-                if key.startswith("node-role.kubernetes.io/")
-            ]
-            lines.append("Roles: " + ", ".join(roles))
+          STATEFULSETS
+          ============
+          {{ statefulsets.json | to_nice_yaml }}
 
-            for condition in node.get("status", {}).get("conditions", []):
-                lines.append(str(condition.get("type", "N/A")) + ": " + str(condition.get("status", "N/A")))
-                lines.append("Reason: " + str(condition.get("reason", "N/A")))
+          SERVICES
+          ========
+          {{ services.json | to_nice_yaml }}
 
-            add_separator()
-
-        add_section("POD SUMMARY")
-        pods = load_items("pods")
-        lines.append("Total pods: " + str(len(pods)))
-
-        for pod in pods:
-            metadata = pod.get("metadata", {})
-            status = pod.get("status", {})
-            spec = pod.get("spec", {})
-
-            lines.append("Namespace: " + str(metadata.get("namespace", "N/A")))
-            lines.append("Pod: " + str(metadata.get("name", "N/A")))
-            lines.append("Phase: " + str(status.get("phase", "Unknown")))
-            lines.append("Node: " + str(spec.get("nodeName", "Unscheduled")))
-            add_separator()
-
-        add_section("EVENTS")
-        events = load_items("events")
-        lines.append("Total events: " + str(len(events)))
-
-        for event in events:
-            metadata = event.get("metadata", {})
-            involved = event.get("involvedObject", {})
-
-            lines.append("Namespace: " + str(metadata.get("namespace", "Cluster")))
-            lines.append("Type: " + str(event.get("type", "N/A")))
-            lines.append("Reason: " + str(event.get("reason", "N/A")))
-            lines.append("Object: " + str(involved.get("name", "N/A")))
-            lines.append("Message: " + str(event.get("message", "N/A")))
-            add_separator()
-
-        resource_files = {
-            "Namespaces": "namespaces",
-            "Persistent Volumes": "persistent-volumes",
-            "Persistent Volume Claims": "persistent-volume-claims",
-            "Storage Classes": "storage-classes",
-            "Deployments": "deployments",
-            "DaemonSets": "daemonsets",
-            "StatefulSets": "statefulsets",
-            "Jobs": "jobs",
-            "CronJobs": "cronjobs",
-            "Services": "services",
-            "Routes": "routes"
-        }
-
-        add_section("RESOURCE COUNTS")
-        for label, filename in resource_files.items():
-            lines.append(label + ": " + str(len(load_items(filename))))
-
-        with open(output, "w", encoding="utf-8") as file:
-            file.write("\n".join(lines) + "\n")
-
-        print("Cluster summary created: " + output)
-        PY
-      args:
-        executable: /bin/bash
-      environment:
-        REPORT_DIR: "{{ report_dir }}"
-        OPENSHIFT_API_URL: "{{ openshift_api_url }}"
-        REPORT_TIMESTAMP: "{{ timestamp }}"
+          ROUTES
+          ======
+          {{ cluster_routes.json | to_nice_yaml }}
       changed_when: true
 
     - name: Display generated SOS report
