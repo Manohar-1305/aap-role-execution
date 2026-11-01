@@ -391,38 +391,45 @@
       changed_when: true
 
  
-    - name: Locate compressed SOS report
-      ansible.builtin.find:
-        paths: "{{ sos_report_dir }}"
-        patterns: "openshift-sos-report-{{ timestamp }}.tar.gz"
-        recurse: true
-        file_type: file
+    - name: Create compressed SOS report
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -czf
+          - "{{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - -C
+          - "{{ sos_report_dir }}"
+          - "sos-report-{{ timestamp }}"
+      delegate_to: localhost
+      register: tar_result
+      changed_when: true
+
+    - name: Verify compressed SOS report
+      ansible.builtin.stat:
+        path: "{{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz"
       register: sos_archive
       delegate_to: localhost
-
-    - name: Verify SOS archive exists
-      ansible.builtin.assert:
-        that:
-          - sos_archive.matched | int > 0
-        fail_msg: "SOS archive was not found under {{ sos_report_dir }}"
 
     - name: Transfer SOS report to bastion
       ansible.builtin.expect:
         command: >-
           scp -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null
-          {{ sos_archive.files[0].path }}
+          {{ sos_report_dir }}/openshift-sos-report-{{ timestamp }}.tar.gz
           root@192.168.0.201:/tmp/
         responses:
           '(?i)password:': "root"
         timeout: 120
       delegate_to: localhost
+      when: sos_archive.stat.exists
       changed_when: true
       no_log: true
 
     - name: Display SOS report location
       ansible.builtin.debug:
         msg:
-          - "SOS report transferred successfully."
+          - "SOS report saved and transferred successfully."
           - "Bastion: 192.168.0.201"
-          - "Destination: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - "Archive: /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+          - "Verify on bastion: ls -lh /tmp/openshift-sos-report-{{ timestamp }}.tar.gz"
+
