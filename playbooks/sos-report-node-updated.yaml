@@ -1,3 +1,4 @@
+
 ---
 - name: Collect SNO Node SOS Report
   hosts: localhost
@@ -12,6 +13,7 @@
     sos_report_dir: "/tmp/openshift-sos-reports"
     namespace: "default"
     debug_pod: "sno-sos-debug"
+    container_name: "support-tools"
 
   tasks:
     - name: Set report timestamp
@@ -53,7 +55,7 @@
             hostIPC: true
             restartPolicy: Never
             containers:
-              - name: support-tools
+              - name: "{{ container_name }}"
                 image: registry.redhat.io/rhel9/support-tools:latest
                 command:
                   - sleep
@@ -96,7 +98,7 @@
                   path: /etc/localtime
                   type: File
 
-    - name: Wait for debug pod
+    - name: Wait for support-tools pod
       kubernetes.core.k8s_info:
         host: "{{ openshift_api_url }}"
         api_key: "{{ openshift_token }}"
@@ -111,21 +113,17 @@
       retries: 30
       delay: 10
 
-    - name: Check SOS availability on SNO node
+    - name: Verify SOS availability
       kubernetes.core.k8s_exec:
         host: "{{ openshift_api_url }}"
         api_key: "{{ openshift_token }}"
         validate_certs: "{{ validate_certs }}"
         namespace: "{{ namespace }}"
         pod: "{{ debug_pod }}"
-        container: debug
-        command: "chroot /host bash -c 'command -v sos || find /usr /usr/local -name sos -type f 2>/dev/null'"
-      register: sos_check
+        container: "{{ container_name }}"
+        command: sos --version
+      register: sos_version
       changed_when: false
-
-    - name: Display SOS availability
-      ansible.builtin.debug:
-        var: sos_check.stdout
 
     - name: Generate SOS report on SNO node
       kubernetes.core.k8s_exec:
@@ -134,8 +132,21 @@
         validate_certs: "{{ validate_certs }}"
         namespace: "{{ namespace }}"
         pod: "{{ debug_pod }}"
-        container: debug
-        command: chroot /host sos report --batch
+        container: "{{ container_name }}"
+        command: >-
+          sos report --batch
+          -e openshift
+          -e openshift_ovn
+          -e openvswitch
+          -e podman
+          -e crio
+          -k crio.all=on
+          -k crio.logs=on
+          -k podman.all=on
+          -k podman.logs=on
+          -k networking.ethtool-namespaces=off
+          --all-logs
+          --plugin-timeout=600
       register: sos_result
       changed_when: true
 
@@ -146,10 +157,10 @@
         validate_certs: "{{ validate_certs }}"
         namespace: "{{ namespace }}"
         pod: "{{ debug_pod }}"
-        container: debug
+        container: "{{ container_name }}"
         command: >-
-          chroot /host bash -c
-          "find /var/tmp -maxdepth 1 -type f -name 'sosreport-*.tar*'
+          bash -c "find /host/var/tmp -maxdepth 1
+          -type f -name 'sosreport-*.tar*'
           -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-"
       register: node_archive
       changed_when: false
@@ -158,23 +169,22 @@
       ansible.builtin.assert:
         that:
           - node_archive.stdout | trim | length > 0
-        fail_msg: "SOS report archive was not found on the SNO node."
+        fail_msg: "SOS report archive was not found in /host/var/tmp."
 
     - name: Set SOS archive filename
       ansible.builtin.set_fact:
+        node_archive_path: "{{ node_archive.stdout | trim }}"
         node_archive_name: "{{ node_archive.stdout | trim | basename }}"
 
-    - name: Read SOS archive from SNO node
+    - name: Read SOS archive from support-tools container
       kubernetes.core.k8s_exec:
         host: "{{ openshift_api_url }}"
         api_key: "{{ openshift_token }}"
         validate_certs: "{{ validate_certs }}"
         namespace: "{{ namespace }}"
         pod: "{{ debug_pod }}"
-        container: debug
-        command: >-
-          chroot /host base64 -w0
-          {{ node_archive.stdout | trim | quote }}
+        container: "{{ container_name }}"
+        command: "base64 -w0 {{ node_archive_path | quote }}"
       register: sos_base64
       changed_when: false
       no_log: true
