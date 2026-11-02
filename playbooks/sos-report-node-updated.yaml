@@ -147,6 +147,12 @@
         command: sos --version
       register: sos_version
       changed_when: false
+      async: 30
+      poll: 5
+
+    - name: Display SOS version
+      ansible.builtin.debug:
+        var: sos_version.stdout
 
     - name: Generate SOS report on SNO node
       kubernetes.core.k8s_exec:
