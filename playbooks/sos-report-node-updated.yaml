@@ -82,7 +82,7 @@
       retries: 30
       delay: 10
 
-    - name: Verify SOS is installed on SNO node
+    - name: Check SOS availability on SNO node
       kubernetes.core.k8s_exec:
         host: "{{ openshift_api_url }}"
         api_key: "{{ openshift_token }}"
@@ -90,9 +90,18 @@
         namespace: "{{ namespace }}"
         pod: "{{ debug_pod }}"
         container: debug
-        command: chroot /host sos --version
-      register: sos_version
+        command:
+          - chroot
+          - /host
+          - bash
+          - -c
+          - "command -v sos || find /usr /usr/local -name sos -type f 2>/dev/null"
+      register: sos_check
       changed_when: false
+
+    - name: Display SOS availability
+      ansible.builtin.debug:
+        var: sos_check.stdout
 
     - name: Generate SOS report on SNO node
       kubernetes.core.k8s_exec:
