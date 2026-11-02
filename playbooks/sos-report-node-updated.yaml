@@ -162,16 +162,9 @@
         container: "{{ container_name }}"
         command: >-
           sos report --batch
-          -e openshift
-          -e openshift_ovn
-          -e openvswitch
-          -e podman
+          --sysroot /host
           -e crio
-          -k crio.all=on
-          -k crio.logs=on
-          -k podman.all=on
-          -k podman.logs=on
-          -k networking.ethtool-namespaces=off
+          -e podman
           --all-logs
           --plugin-timeout=600
       register: sos_result
