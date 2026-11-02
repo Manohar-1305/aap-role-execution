@@ -217,11 +217,27 @@
       changed_when: false
       no_log: true
 
-    - name: Save SOS archive in AAP execution environment
+    - name: Split SOS archive into chunks
+      ansible.builtin.set_fact:
+        sos_base64_chunks: "{{ sos_base64.stdout | regex_findall('.{1,49152}') }}"
+      no_log: true
+
+    - name: Create empty SOS archive file
       ansible.builtin.shell: |
-        printf '%s' {{ sos_base64.stdout | quote }} | base64 -d > {{ (report_dir ~ '/' ~ node_archive_name) | quote }}
+        : > {{ (report_dir ~ '/' ~ node_archive_name) | quote }}
       args:
         executable: /bin/bash
+      changed_when: true
+
+    - name: Save SOS archive in AAP execution environment
+      ansible.builtin.shell: |
+        printf '%s' {{ item | quote }} | base64 -d >> {{ (report_dir ~ '/' ~ node_archive_name) | quote }}
+      args:
+        executable: /bin/bash
+      loop: "{{ sos_base64_chunks }}"
+      loop_control:
+        label: "Saving chunk {{ ansible_loop.index }}"
+        extended: true
       changed_when: true
       no_log: true
 
