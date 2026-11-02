@@ -217,11 +217,14 @@
       changed_when: false
       no_log: true
 
-    - name: Save SOS archive in AAP execution environment
+    - name: Save SOS archive chunks in AAP execution environment
       ansible.builtin.shell: |
-        printf '%s' {{ sos_base64.stdout | quote }} | base64 -d > {{ (report_dir ~ '/' ~ node_archive_name) | quote }}
+        printf '%s' {{ item.stdout | quote }} | base64 -d >> {{ (report_dir ~ '/' ~ node_archive_name) | quote }}
       args:
         executable: /bin/bash
+      loop: "{{ sos_chunks.results }}"
+      loop_control:
+        label: "Saving chunk {{ item.item + 1 }}"
       changed_when: true
       no_log: true
 
