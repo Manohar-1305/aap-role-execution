@@ -1,0 +1,136 @@
+---
+- name: Collect OpenShift Cluster Diagnostics
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    openshift_api_url: "https://api.sno.manohar.in:6443"
+    openshift_token: "{{ lookup('env', 'OPENSHIFT_TOKEN') }}"
+    validate_certs: false
+
+    sos_report_dir: "/tmp/openshift-sos-reports"
+
+    api_headers:
+      Authorization: "Bearer {{ openshift_token }}"
+      Accept: "application/json"
+
+    diagnostic_endpoints:
+      - name: nodes
+        path: "/api/v1/nodes"
+
+      - name: namespaces
+        path: "/api/v1/namespaces"
+
+      - name: pods
+        path: "/api/v1/pods"
+
+      - name: events
+        path: "/api/v1/events"
+
+      - name: services
+        path: "/api/v1/services"
+
+      - name: persistent-volumes
+        path: "/api/v1/persistentvolumes"
+
+      - name: persistent-volume-claims
+        path: "/api/v1/persistentvolumeclaims"
+
+      - name: deployments
+        path: "/apis/apps/v1/deployments"
+
+      - name: daemonsets
+        path: "/apis/apps/v1/daemonsets"
+
+      - name: statefulsets
+        path: "/apis/apps/v1/statefulsets"
+
+      - name: clusteroperators
+        path: "/apis/config.openshift.io/v1/clusteroperators"
+
+      - name: clusterversions
+        path: "/apis/config.openshift.io/v1/clusterversions"
+
+      - name: routes
+        path: "/apis/route.openshift.io/v1/routes"
+
+      - name: projects
+        path: "/apis/project.openshift.io/v1/projects"
+
+  tasks:
+    - name: Set report timestamp
+      ansible.builtin.set_fact:
+        timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+
+    - name: Set report directory
+      ansible.builtin.set_fact:
+        report_dir: "{{ sos_report_dir }}/inspect-{{ timestamp }}"
+
+    - name: Verify OpenShift token
+      ansible.builtin.assert:
+        that:
+          - openshift_token | length > 0
+        fail_msg: "OPENSHIFT_TOKEN is not available."
+
+    - name: Create report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Collect OpenShift cluster information through REST API
+      ansible.builtin.uri:
+        url: "{{ openshift_api_url }}{{ item.path }}"
+        method: GET
+        headers: "{{ api_headers }}"
+        validate_certs: "{{ validate_certs }}"
+        return_content: true
+        status_code:
+          - 200
+          - 404
+      loop: "{{ diagnostic_endpoints }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: api_results
+      no_log: true
+
+    - name: Save OpenShift API responses
+      ansible.builtin.copy:
+        content: "{{ item.json | default({'error': 'Resource endpoint not available'}) | to_nice_json }}"
+        dest: "{{ report_dir }}/{{ item.item.name }}.json"
+        mode: "0640"
+      loop: "{{ api_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Create compressed cluster diagnostic report
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -czf
+          - "{{ sos_report_dir }}/openshift-inspect-{{ timestamp }}.tar.gz"
+          - -C
+          - "{{ sos_report_dir }}"
+          - "inspect-{{ timestamp }}"
+      changed_when: true
+
+    - name: Transfer cluster report to bastion
+      ansible.builtin.expect:
+        command: >-
+          scp -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ sos_report_dir }}/openshift-inspect-{{ timestamp }}.tar.gz
+          root@192.168.0.201:/tmp/
+        responses:
+          '(?i)password:': "root"
+        timeout: 600
+      no_log: true
+      changed_when: true
+
+    - name: Display report location
+      ansible.builtin.debug:
+        msg:
+          - "OpenShift REST API diagnostics completed."
+          - "Bastion: 192.168.0.201"
+          - "Archive: /tmp/openshift-inspect-{{ timestamp }}.tar.gz"
