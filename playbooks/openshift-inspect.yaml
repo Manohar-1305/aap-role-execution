@@ -39,9 +39,11 @@
           - "--server={{ openshift_api_url }}"
           - "--token={{ openshift_token }}"
           - "--insecure-skip-tls-verify=true"
+          - "--request-timeout=15s"
       no_log: true
       changed_when: false
-
+      timeout: 30
+      
     - name: Run OpenShift cluster must-gather
       ansible.builtin.command:
         argv:
