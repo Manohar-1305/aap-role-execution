@@ -225,14 +225,11 @@
       no_log: true
 
     - name: Decode SOS archive in AAP execution environment
-      ansible.builtin.command:
-        argv:
-          - base64
-          - -d
-          - -i
-          - "{{ report_dir }}/sos-archive.b64"
-          - -o
-          - "{{ report_dir }}/{{ node_archive_name }}"
+      ansible.builtin.shell: |
+        base64 -d "{{ report_dir }}/sos-archive.b64" > "{{ report_dir }}/{{ node_archive_name }}"
+      args:
+        executable: /bin/bash
+      register: save_archive_result
       changed_when: true
       no_log: true
 
