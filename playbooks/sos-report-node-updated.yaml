@@ -34,7 +34,7 @@
         state: directory
         mode: "0750"
 
-    - name: Create privileged node debug pod
+    - name: Create privileged node support-tools pod
       kubernetes.core.k8s:
         host: "{{ openshift_api_url }}"
         api_key: "{{ openshift_token }}"
@@ -48,24 +48,53 @@
             namespace: "{{ namespace }}"
           spec:
             nodeName: "{{ node_name }}"
+            hostNetwork: true
             hostPID: true
+            hostIPC: true
             restartPolicy: Never
             containers:
-              - name: debug
-                image: registry.access.redhat.com/ubi9/ubi:latest
+              - name: support-tools
+                image: registry.redhat.io/rhel9/support-tools:latest
                 command:
                   - sleep
                   - "3600"
+                env:
+                  - name: HOST
+                    value: /host
                 securityContext:
                   privileged: true
                 volumeMounts:
                   - name: host-root
                     mountPath: /host
+                  - name: host-run
+                    mountPath: /run
+                  - name: host-var-log
+                    mountPath: /var/log
+                  - name: machine-id
+                    mountPath: /etc/machine-id
+                  - name: localtime
+                    mountPath: /etc/localtime
             volumes:
               - name: host-root
                 hostPath:
                   path: /
                   type: Directory
+              - name: host-run
+                hostPath:
+                  path: /run
+                  type: Directory
+              - name: host-var-log
+                hostPath:
+                  path: /var/log
+                  type: Directory
+              - name: machine-id
+                hostPath:
+                  path: /etc/machine-id
+                  type: File
+              - name: localtime
+                hostPath:
+                  path: /etc/localtime
+                  type: File
 
     - name: Wait for debug pod
       kubernetes.core.k8s_info:
