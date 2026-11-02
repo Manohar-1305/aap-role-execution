@@ -161,14 +161,21 @@
         pod: "{{ debug_pod }}"
         container: "{{ container_name }}"
         command: >-
-          sos report --batch
+          timeout 1800 sos report
+          --batch
           --sysroot /host
-          -e crio
-          -e podman
-          --all-logs
+          --tmp-dir /host/var/tmp
+          --chroot always
           --plugin-timeout=600
+          --cmd-timeout=120
       register: sos_result
       changed_when: true
+
+    - name: Display SOS generation output
+      ansible.builtin.debug:
+        msg:
+          - "{{ sos_result.stdout | default('') }}"
+          - "{{ sos_result.stderr | default('') }}"
 
     - name: Locate generated SOS archive
       kubernetes.core.k8s_exec:
