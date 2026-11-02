@@ -1,0 +1,197 @@
+---
+- name: Collect SNO Node SOS Report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    openshift_api_url: "https://api.sno.manohar.in:6443"
+    openshift_token: "{{ lookup('env', 'OPENSHIFT_TOKEN') }}"
+    validate_certs: false
+    node_name: "sno.manohar.in"
+    sos_report_dir: "/tmp/openshift-sos-reports"
+    namespace: "default"
+    debug_pod: "sno-sos-debug"
+
+  tasks:
+    - name: Set report timestamp
+      ansible.builtin.set_fact:
+        timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+
+    - name: Set report directory
+      ansible.builtin.set_fact:
+        report_dir: "{{ sos_report_dir }}/node-sos-{{ timestamp }}"
+
+    - name: Verify OpenShift token
+      ansible.builtin.assert:
+        that:
+          - openshift_token | length > 0
+        fail_msg: "OPENSHIFT_TOKEN is not available."
+
+    - name: Create report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Create privileged node debug pod
+      kubernetes.core.k8s:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: "{{ debug_pod }}"
+            namespace: "{{ namespace }}"
+          spec:
+            nodeName: "{{ node_name }}"
+            hostPID: true
+            restartPolicy: Never
+            containers:
+              - name: debug
+                image: registry.access.redhat.com/ubi9/ubi:latest
+                command:
+                  - sleep
+                  - "3600"
+                securityContext:
+                  privileged: true
+                volumeMounts:
+                  - name: host-root
+                    mountPath: /host
+            volumes:
+              - name: host-root
+                hostPath:
+                  path: /
+                  type: Directory
+
+    - name: Wait for debug pod
+      kubernetes.core.k8s_info:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ debug_pod }}"
+      register: debug_pod_status
+      until:
+        - debug_pod_status.resources | length > 0
+        - debug_pod_status.resources[0].status.phase == "Running"
+      retries: 30
+      delay: 10
+
+    - name: Verify SOS is installed on SNO node
+      kubernetes.core.k8s_exec:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        namespace: "{{ namespace }}"
+        pod: "{{ debug_pod }}"
+        container: debug
+        command: chroot /host sos --version
+      register: sos_version
+      changed_when: false
+
+    - name: Generate SOS report on SNO node
+      kubernetes.core.k8s_exec:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        namespace: "{{ namespace }}"
+        pod: "{{ debug_pod }}"
+        container: debug
+        command: chroot /host sos report --batch
+      register: sos_result
+      changed_when: true
+
+    - name: Locate generated SOS archive
+      kubernetes.core.k8s_exec:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        namespace: "{{ namespace }}"
+        pod: "{{ debug_pod }}"
+        container: debug
+        command: >-
+          chroot /host bash -c
+          "find /var/tmp -maxdepth 1 -type f -name 'sosreport-*.tar*'
+          -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-"
+      register: node_archive
+      changed_when: false
+
+    - name: Verify SOS archive exists
+      ansible.builtin.assert:
+        that:
+          - node_archive.stdout | trim | length > 0
+        fail_msg: "SOS report archive was not found on the SNO node."
+
+    - name: Set SOS archive filename
+      ansible.builtin.set_fact:
+        node_archive_name: "{{ node_archive.stdout | trim | basename }}"
+
+    - name: Read SOS archive from SNO node
+      kubernetes.core.k8s_exec:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        namespace: "{{ namespace }}"
+        pod: "{{ debug_pod }}"
+        container: debug
+        command: >-
+          chroot /host base64 -w0
+          {{ node_archive.stdout | trim | quote }}
+      register: sos_base64
+      changed_when: false
+      no_log: true
+
+    - name: Save SOS archive in AAP execution environment
+      ansible.builtin.shell: |
+        printf '%s' {{ sos_base64.stdout | quote }} | base64 -d > {{ (report_dir ~ '/' ~ node_archive_name) | quote }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Create compressed node SOS package
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -czf
+          - "{{ sos_report_dir }}/sno-node-sos-{{ timestamp }}.tar.gz"
+          - -C
+          - "{{ report_dir }}"
+          - "{{ node_archive_name }}"
+      changed_when: true
+
+    - name: Transfer node SOS report to bastion
+      ansible.builtin.expect:
+        command: >-
+          scp -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ sos_report_dir }}/sno-node-sos-{{ timestamp }}.tar.gz
+          root@192.168.0.201:/tmp/
+        responses:
+          '(?i)password:': "root"
+        timeout: 600
+      no_log: true
+      changed_when: true
+
+    - name: Remove debug pod
+      kubernetes.core.k8s:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        state: absent
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ debug_pod }}"
+
+    - name: Display report location
+      ansible.builtin.debug:
+        msg:
+          - "SNO node SOS report completed."
+          - "Node: {{ node_name }}"
+          - "Bastion: 192.168.0.201"
+          - "Archive: /tmp/sno-node-sos-{{ timestamp }}.tar.gz"
