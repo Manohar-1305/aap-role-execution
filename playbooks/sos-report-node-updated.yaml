@@ -36,6 +36,29 @@
         state: directory
         mode: "0750"
 
+    - name: Delete existing support-tools pod
+      kubernetes.core.k8s:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        state: absent
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ debug_pod }}"
+
+    - name: Wait for existing pod deletion
+      kubernetes.core.k8s_info:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ debug_pod }}"
+      register: old_pod_status
+      until: old_pod_status.resources | length == 0
+      retries: 30
+      delay: 5
+
     - name: Create privileged node support-tools pod
       kubernetes.core.k8s:
         host: "{{ openshift_api_url }}"
