@@ -90,12 +90,7 @@
         namespace: "{{ namespace }}"
         pod: "{{ debug_pod }}"
         container: debug
-        command:
-          - chroot
-          - /host
-          - bash
-          - -c
-          - "command -v sos || find /usr /usr/local -name sos -type f 2>/dev/null"
+        command: "chroot /host bash -c 'command -v sos || find /usr /usr/local -name sos -type f 2>/dev/null'"
       register: sos_check
       changed_when: false
 
