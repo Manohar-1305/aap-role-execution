@@ -1,0 +1,278 @@
+
+---
+- name: Collect SNO Node SOS Report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    openshift_api_url: "https://api.sno.manohar.in:6443"
+    openshift_token: >-
+  {{
+    lookup(
+      'community.hashi_vault.vault_kv2_get',
+      'openshift/sno',
+      engine_mount_point='secret',
+      url='https://VAULT_URL:8200',
+      auth_method='approle',
+      role_id=lookup('env', 'ANSIBLE_HASHI_VAULT_ROLE_ID'),
+      secret_id=lookup('env', 'ANSIBLE_HASHI_VAULT_SECRET_ID')
+    ).secret.openshift_token
+  }}
+    validate_certs: false
+    node_name: "sno.manohar.in"
+    sos_report_dir: "/tmp/openshift-sos-reports"
+    namespace: "default"
+    debug_pod: "sno-sos-debug"
+    container_name: "support-tools"
+
+  tasks:
+    - name: Set report timestamp
+      ansible.builtin.set_fact:
+        timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+
+    - name: Set report directory
+      ansible.builtin.set_fact:
+        report_dir: "{{ sos_report_dir }}/node-sos-{{ timestamp }}"
+
+    - name: Verify OpenShift token
+      ansible.builtin.assert:
+        that:
+          - openshift_token | length > 0
+        fail_msg: "OPENSHIFT_TOKEN is not available."
+
+    - name: Create report directory
+      ansible.builtin.file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Delete existing support-tools pod
+      kubernetes.core.k8s:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        state: absent
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ debug_pod }}"
+
+    - name: Wait for existing pod deletion
+      kubernetes.core.k8s_info:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ debug_pod }}"
+      register: old_pod_status
+      until: old_pod_status.resources | length == 0
+      retries: 30
+      delay: 5
+
+    - name: Create privileged node support-tools pod
+      kubernetes.core.k8s:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: "{{ debug_pod }}"
+            namespace: "{{ namespace }}"
+          spec:
+            nodeName: "{{ node_name }}"
+            hostNetwork: true
+            hostPID: true
+            hostIPC: true
+            restartPolicy: Never
+            containers:
+              - name: "{{ container_name }}"
+                image: registry.redhat.io/rhel9/support-tools:latest
+                command:
+                  - sleep
+                  - "3600"
+                env:
+                  - name: HOST
+                    value: /host
+                securityContext:
+                  privileged: true
+                volumeMounts:
+                  - name: host-root
+                    mountPath: /host
+                  - name: host-run
+                    mountPath: /run
+                  - name: host-var-log
+                    mountPath: /var/log
+                  - name: machine-id
+                    mountPath: /etc/machine-id
+                  - name: localtime
+                    mountPath: /etc/localtime
+            volumes:
+              - name: host-root
+                hostPath:
+                  path: /
+                  type: Directory
+              - name: host-run
+                hostPath:
+                  path: /run
+                  type: Directory
+              - name: host-var-log
+                hostPath:
+                  path: /var/log
+                  type: Directory
+              - name: machine-id
+                hostPath:
+                  path: /etc/machine-id
+                  type: File
+              - name: localtime
+                hostPath:
+                  path: /etc/localtime
+                  type: File
+
+    - name: Wait for support-tools pod
+      kubernetes.core.k8s_info:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ debug_pod }}"
+      register: debug_pod_status
+      until:
+        - debug_pod_status.resources | length > 0
+        - debug_pod_status.resources[0].status.phase == "Running"
+      retries: 30
+      delay: 10
+
+    - name: Verify SOS availability
+      kubernetes.core.k8s_exec:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        namespace: "{{ namespace }}"
+        pod: "{{ debug_pod }}"
+        container: "{{ container_name }}"
+        command: sos --version
+      register: sos_version
+      changed_when: false
+
+    - name: Display SOS version
+      ansible.builtin.debug:
+        var: sos_version.stdout
+
+    - name: Generate SOS report on SNO node
+      kubernetes.core.k8s_exec:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        namespace: "{{ namespace }}"
+        pod: "{{ debug_pod }}"
+        container: "{{ container_name }}"
+        command: >-
+          timeout 1800 sos report
+          --batch
+          --sysroot /host
+          --tmp-dir /host/var/tmp
+          --chroot always
+          --plugin-timeout=600
+          --cmd-timeout=120
+      register: sos_result
+      changed_when: true
+
+    - name: Display SOS generation output
+      ansible.builtin.debug:
+        msg:
+          - "{{ sos_result.stdout | default('') }}"
+          - "{{ sos_result.stderr | default('') }}"
+
+    - name: Locate generated SOS archive
+      kubernetes.core.k8s_exec:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        namespace: "{{ namespace }}"
+        pod: "{{ debug_pod }}"
+        container: "{{ container_name }}"
+        command: >-
+          bash -c "find /host/var/tmp -maxdepth 1
+          -type f -name 'sosreport-*.tar*'
+          -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-"
+      register: node_archive
+      changed_when: false
+
+    - name: Verify SOS archive exists
+      ansible.builtin.assert:
+        that:
+          - node_archive.stdout | trim | length > 0
+        fail_msg: "SOS report archive was not found in /host/var/tmp."
+
+    - name: Set SOS archive filename
+      ansible.builtin.set_fact:
+        node_archive_path: "{{ node_archive.stdout | trim }}"
+        node_archive_name: "{{ node_archive.stdout | trim | basename }}"
+
+    - name: Read SOS archive from support-tools container
+      kubernetes.core.k8s_exec:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        namespace: "{{ namespace }}"
+        pod: "{{ debug_pod }}"
+        container: "{{ container_name }}"
+        command: "base64 -w0 {{ node_archive_path | quote }}"
+      register: sos_base64
+      changed_when: false
+      no_log: true
+
+    - name: Save SOS archive in AAP execution environment
+      ansible.builtin.shell: |
+        printf '%s' {{ sos_base64.stdout | quote }} | base64 -d > {{ (report_dir ~ '/' ~ node_archive_name) | quote }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Create compressed node SOS package
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -czf
+          - "{{ sos_report_dir }}/sno-node-sos-{{ timestamp }}.tar.gz"
+          - -C
+          - "{{ report_dir }}"
+          - "{{ node_archive_name }}"
+      changed_when: true
+
+    - name: Transfer node SOS report to bastion
+      ansible.builtin.expect:
+        command: >-
+          scp -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ sos_report_dir }}/sno-node-sos-{{ timestamp }}.tar.gz
+          root@192.168.0.201:/tmp/
+        responses:
+          '(?i)password:': "root"
+        timeout: 600
+      no_log: true
+      changed_when: true
+
+    - name: Remove debug pod
+      kubernetes.core.k8s:
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_token }}"
+        validate_certs: "{{ validate_certs }}"
+        state: absent
+        kind: Pod
+        namespace: "{{ namespace }}"
+        name: "{{ debug_pod }}"
+
+    - name: Display report location
+      ansible.builtin.debug:
+        msg:
+          - "SNO node SOS report completed."
+          - "Node: {{ node_name }}"
+          - "Bastion: 192.168.0.201"
+          - "Archive: /tmp/sno-node-sos-{{ timestamp }}.tar.gz"
