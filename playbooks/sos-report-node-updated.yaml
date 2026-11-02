@@ -187,7 +187,8 @@
         container: "{{ container_name }}"
         command: >-
           bash -c "find /host/var/tmp -maxdepth 1
-          -type f -name 'sosreport-*.tar*'
+          -type f -name 'sosreport-*.tar.xz'
+          ! -name '*.sha256'
           -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-"
       register: node_archive
       changed_when: false
